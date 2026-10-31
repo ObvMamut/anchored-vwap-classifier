@@ -1,0 +1,10 @@
+id = "H007"
+family = "levels"
+parent = "H003"
+mechanism = "Refinement of H003. If confluence of widely watched levels is what makes the VWAP reject, the effect should grow with the number of levels that coincide with it: a touch within half a volatility unit of two or more of the prior day high, low, close and the overnight high and low should reject more often than all other touches. A single level coinciding was the original rule."
+outcome = "rejection_given_resolved"
+feature = "conf_count"
+rule = "above"
+threshold = 1.5
+direction = "positive"
+timeframes = [5, 15]
