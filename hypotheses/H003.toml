@@ -1,0 +1,8 @@
+id = "H003"
+family = "levels"
+mechanism = "When the VWAP coincides with another widely watched level, the prior day high, low or close or the overnight high or low, several groups of participants act at the same price. A touch within half a volatility unit of such a level should be rejected more often than an isolated touch."
+outcome = "rejection_given_resolved"
+feature = "conf_flag"
+rule = "flag"
+direction = "positive"
+timeframes = [5, 15]
