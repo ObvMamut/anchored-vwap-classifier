@@ -1,0 +1,13 @@
+sigma = "atr"
+m1 = 1.0
+m2 = 1.0
+horizon_5m = 12
+horizon_15m = 8
+max_ambiguous_share = 0.02
+output_dir = "artifacts/labels"
+
+[grid]
+m1 = [0.5, 0.75, 1.0, 1.5]
+m2 = [0.5, 0.75, 1.0, 1.5]
+horizon_5m = [6, 12, 24]
+horizon_15m = [4, 8, 16]

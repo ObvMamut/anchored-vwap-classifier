@@ -82,7 +82,14 @@ fn minutes_to_flat(minute: u16, width: u32, p: &EventParams) -> i32 {
     }
 }
 
+/// Events for the anchored VWAP of the bars.
 pub fn detect(bars: &CoarseBars, p: &EventParams) -> (Vec<Event>, DropCounts) {
+    detect_level(bars, &bars.vwap, p)
+}
+
+/// Events for any level series sampled at the close of each bar. The anchored VWAP and every
+/// control level go through exactly this function.
+pub fn detect_level(bars: &CoarseBars, level: &[f64], p: &EventParams) -> (Vec<Event>, DropCounts) {
     let mut events = Vec::new();
     let mut counts = DropCounts::default();
     let mut cur_session = i32::MIN;
@@ -106,8 +113,8 @@ pub fn detect(bars: &CoarseBars, p: &EventParams) -> (Vec<Event>, DropCounts) {
         }
         let prev_ok = i > 0 && bars.session[i - 1] == session;
         let reference = match (p.reference, prev_ok) {
-            (VwapReference::BarClose, _) => bars.vwap[i],
-            (VwapReference::PriorBarClose, true) => bars.vwap[i - 1],
+            (VwapReference::BarClose, _) => level[i],
+            (VwapReference::PriorBarClose, true) => level[i - 1],
             (VwapReference::PriorBarClose, false) => f64::NAN,
         };
         let is_touch =
@@ -120,7 +127,7 @@ pub fn detect(bars: &CoarseBars, p: &EventParams) -> (Vec<Event>, DropCounts) {
             raw_touches += 1;
         }
         if armed && is_touch {
-            let (ok, side) = qualify(bars, i, prev_ok, p, &mut counts);
+            let (ok, side) = qualify(bars, level, i, prev_ok, p, &mut counts);
             if ok {
                 ordinal += 1;
                 armed = false;
@@ -135,8 +142,8 @@ pub fn detect(bars: &CoarseBars, p: &EventParams) -> (Vec<Event>, DropCounts) {
                     close_us: bars.open_us[i] + i64::from(bars.width) * 60_000_000,
                     side,
                     vwap: reference,
-                    vwap_bar: bars.vwap[i],
-                    vwap_prev: bars.vwap[i - 1],
+                    vwap_bar: level[i],
+                    vwap_prev: level[i - 1],
                     vwap_sd: bars.vwap_sd[i],
                     open: bars.open[i],
                     high: bars.high[i],
@@ -155,7 +162,7 @@ pub fn detect(bars: &CoarseBars, p: &EventParams) -> (Vec<Event>, DropCounts) {
             if is_touch {
                 counts.while_disarmed += 1;
             }
-            let e = (bars.close[i] - bars.vwap[i]).abs() / bars.atr[i];
+            let e = (bars.close[i] - level[i]).abs() / bars.atr[i];
             if e.is_finite() && e >= p.rearm_k {
                 armed = true;
             }
@@ -166,6 +173,7 @@ pub fn detect(bars: &CoarseBars, p: &EventParams) -> (Vec<Event>, DropCounts) {
 
 fn qualify(
     bars: &CoarseBars,
+    level: &[f64],
     i: usize,
     prev_ok: bool,
     p: &EventParams,
@@ -179,7 +187,7 @@ fn qualify(
         c.partial_bar += 1;
         return (false, 0);
     }
-    let diff = bars.close[i - 1] - bars.vwap[i - 1];
+    let diff = bars.close[i - 1] - level[i - 1];
     let side = if diff > 0.0 {
         1
     } else if diff < 0.0 {
@@ -188,7 +196,7 @@ fn qualify(
         c.zero_side += 1;
         return (false, 0);
     };
-    if !bars.atr[i].is_finite() || bars.atr[i] <= 0.0 || !bars.vwap[i - 1].is_finite() {
+    if !bars.atr[i].is_finite() || bars.atr[i] <= 0.0 || !level[i - 1].is_finite() {
         c.atr_undefined += 1;
         return (false, 0);
     }
@@ -228,6 +236,7 @@ mod tests {
             low: rows.iter().map(|r| r.2).collect(),
             close: rows.iter().map(|r| r.3).collect(),
             weight: vec![1.0; n],
+            pv: vec![100.0; n],
             vwap: vec![100.0; n],
             vwap_sd: vec![1.0; n],
             session: vec![1; n],

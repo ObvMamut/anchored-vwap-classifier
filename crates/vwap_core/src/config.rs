@@ -195,3 +195,89 @@ pub struct ValidationConfig {
 pub fn load_validation_config(dir: &Path) -> Result<ValidationConfig, CoreError> {
     read_toml(dir, "validation.toml")
 }
+
+/// Volatility scale for the barriers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SigmaKind {
+    Atr,
+}
+
+/// Sensitivity grid, descriptive statistics only.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LabelGrid {
+    pub m1: Vec<f64>,
+    pub m2: Vec<f64>,
+    pub horizon_5m: Vec<usize>,
+    pub horizon_15m: Vec<usize>,
+}
+
+/// `config/labels.toml`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LabelsConfig {
+    pub sigma: SigmaKind,
+    pub m1: f64,
+    pub m2: f64,
+    pub horizon_5m: usize,
+    pub horizon_15m: usize,
+    pub max_ambiguous_share: f64,
+    pub output_dir: String,
+    pub grid: LabelGrid,
+}
+
+impl LabelsConfig {
+    pub fn horizon(&self, width: u32) -> usize {
+        if width == 5 {
+            self.horizon_5m
+        } else {
+            self.horizon_15m
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), CoreError> {
+        if self.m1 <= 0.0 || self.m2 <= 0.0 || self.horizon_5m == 0 || self.horizon_15m == 0 {
+            return Err(CoreError::ConfigInvalid(
+                "m1, m2 and the horizons must be positive".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub fn load_labels_config(dir: &Path) -> Result<LabelsConfig, CoreError> {
+    let cfg: LabelsConfig = read_toml(dir, "labels.toml")?;
+    cfg.validate()?;
+    Ok(cfg)
+}
+
+/// `config/baselines.toml`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BaselinesConfig {
+    pub seed: u64,
+    pub random_levels_per_session: u32,
+    pub random_level_z_max: f64,
+    pub shifted_anchor_minutes: Vec<u32>,
+    pub stratum_hour_buckets: bool,
+    pub min_stratum_events: usize,
+    pub bootstrap_draws: usize,
+    pub permutations: usize,
+    pub delta_min: f64,
+    pub alpha: f64,
+    pub output_dir: String,
+    pub report_dir: String,
+}
+
+pub fn load_baselines_config(dir: &Path) -> Result<BaselinesConfig, CoreError> {
+    read_toml(dir, "baselines.toml")
+}
+
+/// The first instant of the holdout, as UTC microseconds, given the last bar time.
+pub fn holdout_start_us(last_ts_us: i64, holdout_months: u32) -> i64 {
+    use chrono::{DateTime, Months};
+    DateTime::from_timestamp_micros(last_ts_us)
+        .and_then(|d| d.checked_sub_months(Months::new(holdout_months)))
+        .map_or(last_ts_us, |d| d.timestamp_micros())
+}

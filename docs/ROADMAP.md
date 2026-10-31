@@ -1,5 +1,7 @@
 # Roadmap
 
+Status: Phases 1 and 2 are done. Phase 3 ran and **the gate failed** (see `DECISIONS.md`, section 5), so the project stops at Phase 3 under the stop rule below. Phases 4 to 7 are not started.
+
 Seven phases. Each has deliverables, tests, an exit criterion and a go or no go decision. A gate failure stops the project at that phase and produces a written report. Phases do not overlap: a phase starts only after the previous gate decision is recorded in `DECISIONS.md`.
 
 No Rust code exists yet. Code starts only when the owner says so.

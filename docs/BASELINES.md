@@ -44,13 +44,21 @@ For each of VWAP and every control, for each timeframe, on the primary label cel
 
 ## 4. Test
 
-Statistic: total variation distance between VWAP and a control,
+**As implemented** (this replaces the permutation test first specified, see `DECISIONS.md`, section 8). The control events and the VWAP events of one session travel together, so the design is paired by session. Inference uses a **paired session bootstrap**: whole sessions are resampled with replacement (config `bootstrap_draws`, default 2000, seeded), and in each draw the adjusted class frequencies of both groups are recomputed. Let $\hat\pi^{\mathrm{V}}_c$ and $\hat\pi^{\mathrm{C}}_c$ be the VWAP and stratum adjusted control frequencies and $\Delta_c = \hat\pi^{\mathrm{V}}_c - \hat\pi^{\mathrm{C}}_c$.
 
-$$ \mathrm{TV} = \frac{1}{2}\sum_{c}\big|\hat\pi^{\mathrm{VWAP}}_c - \hat\pi^{\text{ctrl,adj}}_c\big| $$
+* Intervals: simultaneous 95 percent percentile intervals for the three classes (Bonferroni, so $\alpha/3$ per class) for each group frequency and for each $\Delta_c$.
+* Test: a Wald statistic on the class frequency difference vector. With $\hat\Sigma$ the bootstrap covariance of $(\Delta_{\mathrm{REJ}}, \Delta_{\mathrm{BRK}})$,
 
-Null distribution: a **session level permutation test**. Sessions are the exchangeable units. In each permutation, whole sessions' event sets are randomly reassigned between the VWAP group and the control group within strata, and $\mathrm{TV}$ is recomputed (10000 permutations, seeded). The two sided $p$ value is the share of permutations with $\mathrm{TV}$ at least as large as observed, with the usual plus one correction $p = \frac{1 + \#\{\ge\}}{1 + B}$.
+$$ W = \boldsymbol\Delta^{\top}\hat\Sigma^{-1}\boldsymbol\Delta, \qquad p = e^{-W/2} $$
 
-Multiple testing: Holm correction across all (control, timeframe, label cell) combinations in the family that is declared in config.
+  where the closed form of the chi square tail with two degrees of freedom is used. If $\hat\Sigma$ is singular (a class that never occurs) the test falls back to one degree of freedom on the remaining component, $W = \Delta^2/\hat\sigma^2$ and $p = \mathrm{erfc}\big(\sqrt{W/2}\big)$.
+* The total variation distance $\mathrm{TV} = \frac12\sum_c|\Delta_c|$ is reported as a descriptive effect size only.
+* Why not the permutation test: pooling $K_{\text{ctrl}}$ random levels per session makes the control group about $K_{\text{ctrl}}$ times the size of the VWAP group, so the two groups are not exchangeable and a label swap would not reproduce the null distribution.
+* Multiple testing: Holm correction across all (control family, timeframe) tests, six in total.
+
+Stratification as implemented: 24 clock hour buckets of the touch bar close in New York time, crossed with terciles of $\sigma_t / C_t$ (the ATR relative to price, known at the touch) with tercile edges taken from the development VWAP events. This stands in for the realised volatility percentile, which belongs to Phase 4. A stratum is used only if both groups have at least `min_stratum_events` events in it, and the coverage of the VWAP events is reported.
+
+Other implemented details: the random control level is $\ell = O_{\text{first bar}} + z\,\mathrm{ATR}_{\text{previous bar}}$ with $z$ drawn from $\mathrm{Uniform}[-Z, Z]$, a level count $K_{\text{ctrl}} = 10$ per session, and a draw that depends only on the seed, the level index and the session key. The shifted anchors are 11:00 and 13:00 New York time. All statistics use development data only: events whose label ends at or after the holdout start are removed.
 
 ## 5. Gate (pre registered)
 
@@ -68,5 +76,5 @@ Note recorded for transparency: the gate tests unconditional class frequencies. 
 
 * Controls are causal: replacing all bars after the anchor leaves the drawn level unchanged (random control) and replacing bars after $t$ leaves control level values at $t$ unchanged (time shifted controls).
 * Property: with a control level identical to the real VWAP, the baseline pipeline returns exactly the VWAP events (pipeline equivalence).
-* Property: the permutation test gives uniformly distributed $p$ values on data where both groups are drawn from the same distribution (checked with a Kolmogorov Smirnov bound over many seeded runs).
-* Unit: Bonferroni and Holm on small worked examples; clustered bootstrap coverage on synthetic data with known cluster structure.
+* The Wald test on identical groups rarely rejects (at most 8 false rejections in 40 seeded trials at the 5 percent level in the unit test) and detects a planted rejection frequency difference.
+* Unit: Holm on a small worked example; the stratum reweighting on a hand built two stratum case; the closed form of the Wald p value; `erfc` against known values.

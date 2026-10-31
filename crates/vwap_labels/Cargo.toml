@@ -1,0 +1,23 @@
+[package]
+name = "vwap_labels"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+vwap_core = { path = "../vwap_core" }
+vwap_data = { path = "../vwap_data" }
+vwap_events = { path = "../vwap_events" }
+polars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+chrono.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true

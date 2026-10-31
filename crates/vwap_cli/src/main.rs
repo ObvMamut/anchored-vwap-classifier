@@ -12,6 +12,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Label events with the triple barrier.
+    Labels {
+        #[command(subcommand)]
+        stage: LabelsStage,
+    },
+    /// Controls and the Phase 3 gate.
+    Baselines {
+        #[command(subcommand)]
+        stage: BaselinesStage,
+    },
     /// Render the random day charts for the visual check.
     Spotcheck { config: PathBuf },
     /// Event detection stages.
@@ -24,6 +34,18 @@ enum Command {
         #[command(subcommand)]
         stage: DataStage,
     },
+}
+
+#[derive(Subcommand)]
+enum LabelsStage {
+    /// Build labeled events for every timeframe.
+    Build { config: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum BaselinesStage {
+    /// Run the controls and the gate.
+    Run { config: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -45,6 +67,69 @@ enum DataStage {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::Labels {
+            stage: LabelsStage::Build { config },
+        } => {
+            let data = vwap_core::load_data_config(&config)?;
+            let ev = vwap_core::load_events_config(&config)?;
+            let lab = vwap_core::load_labels_config(&config)?;
+            let bars = vwap_data::write::read_partitioned(std::path::Path::new(&data.output_dir))?;
+            let params = vwap_events::event_params(&data, &ev);
+            for &w in &ev.timeframes {
+                let coarse = vwap_events::build(&bars, &data, w, ev.atr_length);
+                let (events, _) = vwap_events::detect(&coarse, &params);
+                let lp = vwap_labels::LabelParams {
+                    m1: lab.m1,
+                    m2: lab.m2,
+                    horizon: lab.horizon(w),
+                };
+                let (labeled, drops) = vwap_labels::label_events(&events, &coarse, &bars, &lp);
+                let mut counts = [0usize; 3];
+                let mut by_year = std::collections::BTreeMap::new();
+                for l in &labeled {
+                    if let Some(c) = l.class {
+                        if let Some(x) = counts.get_mut(c.index()) {
+                            *x += 1;
+                        }
+                    }
+                    let year = vwap_data::diag::utc(l.event.open_us)
+                        .format("%Y")
+                        .to_string()
+                        .parse::<i32>()
+                        .unwrap_or(0);
+                    let e: &mut (usize, usize) = by_year.entry(year).or_default();
+                    e.0 += 1;
+                    e.1 += usize::from(l.ambiguous);
+                }
+                let report = vwap_labels::LabelReport {
+                    width: w,
+                    m1: lab.m1,
+                    m2: lab.m2,
+                    horizon: lab.horizon(w),
+                    drops,
+                    class_counts: counts,
+                    ambiguous_by_year: by_year,
+                };
+                vwap_labels::write_labels(
+                    &labeled,
+                    &report,
+                    std::path::Path::new(&lab.output_dir),
+                )?;
+                println!("{}", serde_json::to_string(&report)?);
+            }
+        }
+        Command::Baselines {
+            stage: BaselinesStage::Run { config },
+        } => {
+            let data = vwap_core::load_data_config(&config)?;
+            let ev = vwap_core::load_events_config(&config)?;
+            let lab = vwap_core::load_labels_config(&config)?;
+            let base = vwap_core::load_baselines_config(&config)?;
+            let val = vwap_core::load_validation_config(&config)?;
+            let bars = vwap_data::write::read_partitioned(std::path::Path::new(&data.output_dir))?;
+            let r = vwap_baselines::run_baselines(&data, &ev, &lab, &base, &val, &bars)?;
+            println!("{}", vwap_baselines::run::render_markdown(&r));
+        }
         Command::Spotcheck { config } => {
             let data = vwap_core::load_data_config(&config)?;
             let ev = vwap_core::load_events_config(&config)?;

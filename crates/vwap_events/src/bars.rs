@@ -23,6 +23,8 @@ pub struct CoarseBars {
     pub low: Vec<f64>,
     pub close: Vec<f64>,
     pub weight: Vec<f64>,
+    /// Sum over the bar's minutes of typical price times weight.
+    pub pv: Vec<f64>,
     /// Anchored VWAP at the last minute of the bar.
     pub vwap: Vec<f64>,
     /// Weight dispersion of the typical price around the VWAP at the last minute.
@@ -102,6 +104,7 @@ pub fn build(b: &CleanBars, cfg: &DataConfig, width: u32, atr_length: usize) -> 
         let minute = u32::from(b.ny_minute[k]);
         let bucket = minute / width;
         let w = b.weight[k];
+        let p_tw = (b.high[k] + b.low[k] + b.close[k]) / 3.0 * w;
         if w > 0.0 {
             let p = (b.high[k] + b.low[k] + b.close[k]) / 3.0;
             s_pv += p * w;
@@ -126,6 +129,7 @@ pub fn build(b: &CleanBars, cfg: &DataConfig, width: u32, atr_length: usize) -> 
             out.low.push(b.low[k]);
             out.close.push(b.close[k]);
             out.weight.push(w);
+            out.pv.push(p_tw);
             out.vwap.push(vwap);
             out.vwap_sd.push(sd);
             out.session.push(session);
@@ -140,6 +144,7 @@ pub fn build(b: &CleanBars, cfg: &DataConfig, width: u32, atr_length: usize) -> 
             out.low[i] = out.low[i].min(b.low[k]);
             out.close[i] = b.close[k];
             out.weight[i] += w;
+            out.pv[i] += p_tw;
             out.vwap[i] = vwap;
             out.vwap_sd[i] = sd;
             out.n_minutes[i] = out.n_minutes[i].saturating_add(1);

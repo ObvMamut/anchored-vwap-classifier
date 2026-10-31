@@ -4116,15 +4116,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
 
 [[package]]
+name = "vwap_baselines"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "proptest",
+ "rand 0.9.5",
+ "rand_chacha 0.9.0",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "vwap_core",
+ "vwap_data",
+ "vwap_events",
+ "vwap_labels",
+]
+
+[[package]]
 name = "vwap_cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "serde_json",
+ "vwap_baselines",
  "vwap_core",
  "vwap_data",
  "vwap_events",
+ "vwap_labels",
  "vwap_report",
 ]
 
@@ -4168,6 +4187,22 @@ dependencies = [
  "toml",
  "vwap_core",
  "vwap_data",
+]
+
+[[package]]
+name = "vwap_labels"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "polars",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "toml",
+ "vwap_core",
+ "vwap_data",
+ "vwap_events",
 ]
 
 [[package]]
