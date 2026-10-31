@@ -1,5 +1,7 @@
 # Roadmap
 
+**Outcome:** the research loop ran on the discovery segment (omnibus, 7 hypothesis cards, 8 counted trials) and gate 3b was not passed: nothing was promoted, so confirmation, the cost aware backtest and the holdout run were not started. See `DECISIONS.md`, section 14.
+
 Status: Phases 1 and 2 are done. Phase 3 as first specified ran and its marginal gate failed (see `DECISIONS.md`, section 5). The owner approved a redesign: gate 3 is now two tiers (3a equivalence verdict, 3b conditional screen) and the later phases run as a closed research loop under `PROTOCOL.md`, with a three way data split (discovery, confirmation, holdout).
 
 Seven phases. Each has deliverables, tests, an exit criterion and a go or no go decision. A gate failure stops the project at that phase and produces a written report. Phases do not overlap: a phase starts only after the previous gate decision is recorded in `DECISIONS.md`.

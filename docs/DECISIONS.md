@@ -132,3 +132,27 @@ Reading: at the level of the marginal class mix the VWAP behaves like an arbitra
 **Conclusion.** The omnibus "structure" is the mundane chop and clock effect. The project question, whether features at a VWAP touch predict rejection versus breakthrough, shows no signal at the omnibus level.
 
 **Flaw found in the protocol.** The card outcome `rejection` is the indicator of the REJECTION class, which equals $(1 - P_{\text{chop}})\,P(\text{rej} \mid \text{resolved})$. Any feature related to chop, above all time of day, would make a card on `rejection` look significant through chop alone. The directional hypothesis needs the outcome conditional on resolution. Changing the outcome definition is a protocol change and needs the owner's decision.
+
+## 14. Research loop result on the discovery segment (cycles 1 to 8)
+
+Protocol: `docs/PROTOCOL.md`. Data: discovery 2016-11-15 to 2021-09-30 only. Confirmation and holdout rows were not read. Outcome for all cards: `rejection_given_resolved` (amended after cycle 0, see section 13). Card alpha $0.04/12 \approx 0.0033$, both timeframes must pass (the larger p is used).
+
+* **H001 trend pullback (`vslope_align`, top tercile).** Difference $-0.04$ points (5 minute) and $-1.4$ points (15 minute), p = 0.80. DROP. Predicted sign not found on 15 minute bars.
+* **H002 stretched approach (`dist_travelled`, top tercile).** $+0.9$ and $+0.6$ points, p = 0.36. DROP.
+* **H003 level confluence (`conf_flag`).** $+2.3$ points on both timeframes, one sided p = 0.045 (5 minute) and 0.080 (15 minute), sign stable in only 4 of 6 and 3 of 5 years, below the 3 point minimum and the 5 to 6 point minimum detectable effect. REFINE.
+* **H004 session blocks (`time_block`, groups test).** p = 0.55 (5 minute) and 0.03 (15 minute, driven by one cell of 96 afternoon events at 63.5 percent). DROP. The harness recorded a minimum detectable effect of 0.00 for this card because it was not computed for group tests; fixed for later runs (shown as not computed), and the append only ledger line for H004 keeps the 0.0 value.
+* **H005 relative volume (`rel_volume`, top tercile, predicted negative).** $-0.7$ and $-1.2$ points, p = 0.28 and 0.22. DROP. Volume is a tick count proxy.
+* **H006 first touch of the session (`ordinal` below 1.5).** $-3.8$ points on 5 minute bars (opposite to the prediction) and $+0.6$ on 15 minute bars. DROP.
+* **H007 refinement of H003 (`conf_count` at least 2).** $+6.6$ and $+6.8$ points on 115 and 142 events, one sided p = 0.071 and 0.058, interval from about $-2$ to $+15$ points, minimum detectable effect 15 to 16 points. REFINE. The one allowed refinement for this mechanism is now used.
+
+**Counted trials:** 8 (the omnibus and 7 cards). Alpha spent 0.0333 of 0.05, cards run 7 of 12.
+
+**Gate 3b: not passed.** No card was PROMOTED, so none went to the confirmation segment, which was not touched. The stop rule (two consecutive nulls after the omnibus) was met after H002 and H004 to H006, and the one refinement is spent.
+
+**What the data can and cannot show.**
+* Direction (rejection versus breakthrough) is not predictable from 17 features at the VWAP touch: the omnibus direction screen gave a negative log loss improvement with a flexible model, and none of the six mechanism cards found an effect near its minimum detectable effect.
+* Only chop is predictable, and mostly from the clock, which is not VWAP specific.
+* The only thread above noise is level confluence: $+2.3$ points for one coinciding level and $+6.6$ points for two or more, consistent in sign on both timeframes. It does not reach significance and it is far below the data's power. To detect a $+3$ point effect for the single level subset at about 15 percent of events, the sample would need to be roughly four times larger, and for the two level subset roughly twenty times larger. This is a lead for a future study with more data or a better price and volume series, not a result.
+* Caveats that apply to all conclusions: the weight is a tick count, the series is a broker style index series and not exchange NQ prints, 2017 to 2020 are gappy, and discovery spans only about 4.9 years.
+
+**Recommended next steps (owner's decision).** Stop here and report the negative result for VWAP touches on this data, or reopen with a new data source (exchange futures with real volume, or more history) and register confluence as the first card there. No holdout run is justified, because nothing was promoted and nothing survived confirmation.
