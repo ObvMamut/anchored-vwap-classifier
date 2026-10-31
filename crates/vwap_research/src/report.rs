@@ -8,6 +8,9 @@ fn pct(x: f64) -> String {
 }
 
 fn ticks_or_pct(card: &Card, x: f64) -> String {
+    if x.is_nan() {
+        return "not computed".to_string();
+    }
     match card.outcome {
         crate::card::Outcome::Rejection | crate::card::Outcome::RejectionGivenResolved => pct(x),
         crate::card::Outcome::NetTicks => format!("{x:.2} ticks"),

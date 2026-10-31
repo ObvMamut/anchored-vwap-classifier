@@ -24,7 +24,7 @@ impl FeatureTable {
     }
 }
 
-const NAMES: [&str; 17] = [
+const NAMES: [&str; 18] = [
     "vslope_align",
     "dist_travelled",
     "bars_on_side",
@@ -42,6 +42,7 @@ const NAMES: [&str; 17] = [
     "dist_pdc",
     "dist_onh",
     "time_block",
+    "conf_count",
 ];
 
 pub fn feature_names() -> &'static [&'static str] {
@@ -72,7 +73,7 @@ fn feature_row(
     v: &CausalView,
     levels: &LevelTable,
     sessions: &SessionIndex,
-) -> [f64; 17] {
+) -> [f64; 18] {
     let nan = f64::NAN;
     let t = v.t();
     let s = f64::from(e.side);
@@ -150,6 +151,15 @@ fn feature_row(
     } else {
         nan
     };
+    // number of the five levels within half a volatility unit of the touch close
+    let conf_count = if lv.is_some() {
+        [dpdh, dpdl, dpdc, donh, donl]
+            .iter()
+            .filter(|x| x.is_finite() && x.abs() <= 0.5)
+            .count() as f64
+    } else {
+        nan
+    };
 
     // time blocks by the New York clock of the touch close
     let time_block = match close_minute {
@@ -177,6 +187,7 @@ fn feature_row(
         dpdc,
         donh,
         time_block,
+        conf_count,
     ]
 }
 

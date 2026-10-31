@@ -45,7 +45,9 @@ pub enum Entry {
         alpha_spent: f64,
         delta: f64,
         p: f64,
-        mde: f64,
+        /// `None` when no minimum detectable effect is defined (group tests).
+        #[serde(default)]
+        mde: Option<f64>,
         verdict: Verdict,
         time_utc: String,
     },
@@ -276,7 +278,7 @@ seed = 1
             alpha_spent: 0.02,
             delta: 0.04,
             p: 0.001,
-            mde: 0.03,
+            mde: Some(0.03),
             verdict,
             time_utc: "t".into(),
         }
@@ -331,5 +333,35 @@ seed = 1
         })
         .unwrap();
         assert!(l.confirm_permit("P").is_err());
+    }
+}
+
+#[cfg(test)]
+mod nan_tests {
+    use super::*;
+
+    #[test]
+    fn an_entry_without_a_minimum_detectable_effect_round_trips_and_old_lines_still_parse() {
+        let e = Entry::Run {
+            cycle: 1,
+            card_id: "G".into(),
+            sha256: "h".into(),
+            git_commit: "c".into(),
+            view: "discovery".into(),
+            timeframes: vec![5],
+            trials_added: 1,
+            alpha_spent: 0.003,
+            delta: 0.02,
+            p: 0.5,
+            mde: None,
+            verdict: Verdict::Drop,
+            time_utc: "t".into(),
+        };
+        let line = serde_json::to_string(&e).unwrap();
+        let back: Entry = serde_json::from_str(&line).unwrap();
+        assert!(matches!(back, Entry::Run { mde: None, .. }));
+        // a line written by the earlier version carried a number
+        let old = line.replace("\"mde\":null", "\"mde\":0.0");
+        assert!(serde_json::from_str::<Entry>(&old).is_ok());
     }
 }

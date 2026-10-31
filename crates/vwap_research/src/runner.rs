@@ -392,6 +392,8 @@ fn group_test(
         .collect();
     res.delta = mu.iter().map(|m| (m - om).abs()).fold(0.0, f64::max);
     res.n_subset = rows.len();
+    // a minimum detectable effect is not defined for the joint test of several groups
+    res.mde = f64::NAN;
     let n = sums.len();
     let mut diffs: Vec<Vec<f64>> = Vec::new();
     for _ in 0..cfg.bootstrap_draws {
@@ -445,7 +447,11 @@ pub fn decide(
     let alpha = card.alpha.unwrap_or_else(|| cfg.alpha_per_card());
     let min_effect = card.min_effect.unwrap_or(cfg.default_min_effect);
     let p = widths.iter().map(|w| w.p).fold(0.0, f64::max);
-    let mde = widths.iter().map(|w| w.mde).fold(0.0, f64::max);
+    let mde = widths
+        .iter()
+        .map(|w| w.mde)
+        .filter(|m| m.is_finite())
+        .fold(f64::NAN, f64::max);
     let mut reasons = Vec::new();
     let predicted = match card.direction {
         Direction::Positive => 1.0,

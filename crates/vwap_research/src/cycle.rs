@@ -103,7 +103,7 @@ pub fn execute(
         alpha_spent: if first_run { alpha } else { 0.0 },
         delta: result.delta,
         p: result.p,
-        mde: result.mde,
+        mde: result.mde.is_finite().then_some(result.mde),
         verdict: result.verdict,
         time_utc: now(),
     })?;
