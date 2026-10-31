@@ -1,0 +1,9 @@
+id = "H006"
+family = "regime"
+mechanism = "The first accepted touch of a session tests an untouched VWAP, while repeated touches show the level is being absorbed. The first touch should be rejected more often than later touches in the same session."
+outcome = "rejection_given_resolved"
+feature = "ordinal"
+rule = "below"
+threshold = 1.5
+direction = "positive"
+timeframes = [5, 15]
