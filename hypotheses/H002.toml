@@ -1,0 +1,8 @@
+id = "H002"
+family = "approach"
+mechanism = "A stretched approach means price travelled far from fair value before returning to it. Participants who faded the stretch take profit at the VWAP and fresh trend followers have not yet arrived, so touches after a long stretch should reject more often than touches after a short approach. The mechanism is weak and may well reverse."
+outcome = "rejection_given_resolved"
+feature = "dist_travelled"
+rule = "top_tercile"
+direction = "positive"
+timeframes = [5, 15]
