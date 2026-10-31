@@ -1,0 +1,8 @@
+id = "H005"
+family = "volume"
+mechanism = "A touch on unusually heavy participation, relative to the same clock time over the previous twenty sessions, signals conviction and should break through more often. The prediction is therefore a lower rejection rate in the top tercile of relative volume. Volume here is a tick count proxy, so this card is expected to be weak."
+outcome = "rejection_given_resolved"
+feature = "rel_volume"
+rule = "top_tercile"
+direction = "negative"
+timeframes = [5, 15]
