@@ -153,6 +153,47 @@ pub fn execute_omnibus(
     Ok(r)
 }
 
+/// Descriptive decomposition of the omnibus. Logged as a diagnostic, spends no alpha.
+pub fn execute_diagnostic(
+    cfg: &ResearchConfig,
+    git_commit: &str,
+    samples: &[Sample],
+    horizon_bars: impl Fn(u32) -> usize,
+    tasks: &[crate::omnibus::Task],
+    perms: usize,
+) -> Result<Vec<crate::omnibus::Decomposition>, ResearchError> {
+    let ledger = Ledger::open(Path::new(&cfg.ledger_path));
+    let view = DiscoveryView::select(samples, &Bounds::from_config(cfg));
+    let mut out = Vec::new();
+    for &t in tasks {
+        let d = crate::omnibus::decompose(view.samples(), cfg, &horizon_bars, t, perms)?;
+        let note = d
+            .widths
+            .iter()
+            .map(|w| format!("{}m stat {:.5} p {:.4}", w.width, w.statistic, w.p))
+            .collect::<Vec<_>>()
+            .join("; ");
+        ledger.append(&Entry::Diagnostic {
+            name: format!("omnibus_decomposition_{t:?}"),
+            git_commit: git_commit.to_string(),
+            note,
+            time_utc: now(),
+        })?;
+        out.push(d);
+    }
+    let dir = Path::new(&cfg.report_dir);
+    fs::create_dir_all(dir).map_err(|source| ResearchError::Io {
+        path: dir.display().to_string(),
+        source,
+    })?;
+    let rp = dir.join("omnibus_decomposition.json");
+    fs::write(&rp, serde_json::to_string_pretty(&out)?).map_err(|source| ResearchError::Io {
+        path: rp.display().to_string(),
+        source,
+    })?;
+    Ok(out)
+}
+
 /// Text for `vwap research status`.
 pub fn status(cfg: &ResearchConfig) -> Result<String, ResearchError> {
     let ledger = Ledger::open(Path::new(&cfg.ledger_path));
@@ -205,6 +246,9 @@ pub fn status(cfg: &ResearchConfig) -> Result<String, ResearchError> {
             } => s.push_str(&format!(
                 "cycle {cycle}: {card_id} confirmation: delta {delta:.4}, p {p:.4}, {verdict:?}\n"
             )),
+            Entry::Diagnostic { name, note, .. } => {
+                s.push_str(&format!("diagnostic {name}: {note}\n"));
+            }
             Entry::Registered { .. } => {}
         }
     }
@@ -214,10 +258,10 @@ pub fn status(cfg: &ResearchConfig) -> Result<String, ResearchError> {
         .take_while(|e| match e {
             Entry::Run { verdict, .. } => *verdict == Verdict::Drop,
             Entry::Omnibus { verdict, .. } => *verdict == Verdict::Null,
-            Entry::Registered { .. } => true,
+            Entry::Registered { .. } | Entry::Diagnostic { .. } => true,
             _ => false,
         })
-        .filter(|e| !matches!(e, Entry::Registered { .. }))
+        .filter(|e| !matches!(e, Entry::Registered { .. } | Entry::Diagnostic { .. }))
         .count();
     s.push_str(&format!(
         "consecutive nulls at the end of the ledger: {nulls}\n"

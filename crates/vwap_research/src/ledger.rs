@@ -69,6 +69,13 @@ pub enum Entry {
         verdict: Verdict,
         time_utc: String,
     },
+    /// A descriptive analysis that spends no alpha and cannot promote anything.
+    Diagnostic {
+        name: String,
+        git_commit: String,
+        note: String,
+        time_utc: String,
+    },
 }
 
 pub struct Ledger {
@@ -153,7 +160,7 @@ impl Ledger {
         Ok(self
             .read_all()?
             .iter()
-            .filter(|e| !matches!(e, Entry::Registered { .. }))
+            .filter(|e| !matches!(e, Entry::Registered { .. } | Entry::Diagnostic { .. }))
             .count()
             + 1)
     }

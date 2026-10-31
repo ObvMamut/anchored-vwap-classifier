@@ -1,10 +1,10 @@
 //! Cycle 0: is there any predictive structure in the features at all?
 //!
-//! A LightGBM multiclass model with fixed, pre registered settings is scored by purged
-//! expanding blocked cross validation. The statistic is the log loss improvement over the
-//! training frequencies. The null distribution comes from circularly shifting the label
-//! sequence, which keeps the label dependence structure and breaks its alignment with the
-//! features (a within session shuffle would keep between session associations).
+//! A LightGBM model with fixed, pre registered settings is scored by purged expanding
+//! blocked cross validation. The statistic is the log loss improvement over the training
+//! frequencies. The null distribution comes from circularly shifting the label sequence,
+//! which keeps the label dependence structure and breaks its alignment with the features
+//! (a within session shuffle would keep between session associations).
 #![allow(clippy::indexing_slicing)]
 
 use lightgbm3::{Booster, Dataset};
@@ -17,6 +17,17 @@ use vwap_features::feature_names;
 use crate::error::ResearchError;
 use crate::ledger::Verdict;
 use crate::split::Sample;
+
+/// Which outcome the screen predicts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum Task {
+    /// Rejection, breakthrough and chop together (the original cycle 0).
+    Multi,
+    /// Breakthrough versus rejection among events that resolved at a barrier.
+    Direction,
+    /// Chop versus a barrier hit.
+    Chop,
+}
 
 const BLOCKS: usize = 6;
 const ROUNDS: i64 = 60;
@@ -50,10 +61,11 @@ struct Data {
     t_end: Vec<i64>,
 }
 
-fn prepare(samples: &[&Sample]) -> Data {
+fn prepare(samples: &[&Sample], task: Task) -> Data {
     let mut rows: Vec<&&Sample> = samples
         .iter()
         .filter(|s| !s.ambiguous && s.class.is_some())
+        .filter(|s| task != Task::Direction || s.class != Some(Class::Chop))
         .collect();
     rows.sort_by_key(|s| (s.t_close_us, s.event_id));
     let n_feat = feature_names().len();
@@ -66,17 +78,20 @@ fn prepare(samples: &[&Sample]) -> Data {
     };
     for s in rows {
         d.x.extend(s.features.iter().copied());
-        d.y.push(s.class.map_or(0, Class::index));
+        d.y.push(match (task, s.class) {
+            (Task::Multi, c) => c.map_or(0, Class::index),
+            (Task::Direction, c) => usize::from(c == Some(Class::Breakthrough)),
+            (Task::Chop, c) => usize::from(c == Some(Class::Chop)),
+        });
         d.t_close.push(s.t_close_us);
         d.t_end.push(s.t_end_us);
     }
     d
 }
 
-fn params(seed: u64) -> serde_json::Value {
-    json!({
-        "objective": "multiclass",
-        "num_class": 3,
+fn params(seed: u64, classes: usize) -> serde_json::Value {
+    let mut p = json!({
+        "objective": if classes == 3 { "multiclass" } else { "binary" },
         "num_iterations": ROUNDS,
         "learning_rate": 0.05,
         "num_leaves": 7,
@@ -91,11 +106,15 @@ fn params(seed: u64) -> serde_json::Value {
         "bagging_seed": seed,
         "feature_fraction_seed": seed,
         "data_random_seed": seed,
-    })
+    });
+    if classes == 3 {
+        p["num_class"] = json!(3);
+    }
+    p
 }
 
 /// Pooled log loss improvement over the training frequencies, for labels `y`.
-fn statistic(d: &Data, y: &[usize], embargo_us: i64, seed: u64) -> Option<f64> {
+fn statistic(d: &Data, y: &[usize], embargo_us: i64, seed: u64, classes: usize) -> Option<f64> {
     let n = y.len();
     let block = n / BLOCKS;
     let (mut gain, mut count) = (0.0, 0usize);
@@ -115,7 +134,7 @@ fn statistic(d: &Data, y: &[usize], embargo_us: i64, seed: u64) -> Option<f64> {
             .collect();
         let labels: Vec<f32> = train.iter().map(|&i| y[i] as f32).collect();
         let ds = Dataset::from_slice(&flat, &labels, d.n_feat as i32, true).ok()?;
-        let booster = Booster::train(ds, &params(seed)).ok()?;
+        let booster = Booster::train(ds, &params(seed, classes)).ok()?;
         let test_flat = &d.x[a * d.n_feat..z * d.n_feat];
         let p = booster.predict(test_flat, d.n_feat as i32, true).ok()?;
         let mut freq = [1.0f64; 3];
@@ -124,7 +143,14 @@ fn statistic(d: &Data, y: &[usize], embargo_us: i64, seed: u64) -> Option<f64> {
         }
         let tot: f64 = freq.iter().sum();
         for (j, i) in (a..z).enumerate() {
-            let pm = (p[j * 3 + y[i]]).clamp(1e-12, 1.0);
+            let pm = if classes == 3 {
+                p[j * 3 + y[i]]
+            } else if y[i] == 1 {
+                p[j]
+            } else {
+                1.0 - p[j]
+            }
+            .clamp(1e-12, 1.0);
             let pb = freq[y[i]] / tot;
             gain += pb.ln().abs() - pm.ln().abs();
             count += 1;
@@ -138,8 +164,11 @@ fn width_omnibus(
     width: u32,
     horizon_bars: usize,
     cfg: &ResearchConfig,
+    task: Task,
+    perms: usize,
 ) -> Result<WidthOmnibus, ResearchError> {
-    let d = prepare(samples);
+    let d = prepare(samples, task);
+    let classes = if task == Task::Multi { 3 } else { 2 };
     let n = d.y.len();
     if n < 1500 {
         return Err(ResearchError::NotEnoughData(format!(
@@ -147,9 +176,8 @@ fn width_omnibus(
         )));
     }
     let embargo_us = (horizon_bars as i64) * i64::from(width) * 60_000_000;
-    let obs = statistic(&d, &d.y, embargo_us, cfg.seed)
+    let obs = statistic(&d, &d.y, embargo_us, cfg.seed, classes)
         .ok_or_else(|| ResearchError::NotEnoughData("cross validation produced no folds".into()))?;
-    let perms = cfg.omnibus_permutations;
     let nulls: Vec<f64> = (0..perms)
         .into_par_iter()
         .map(|b| {
@@ -159,7 +187,7 @@ fn width_omnibus(
             let span = (n as u64) * 8 / 10;
             let off = n / 10 + (h >> 11) as usize % span.max(1) as usize;
             let y: Vec<usize> = (0..n).map(|i| d.y[(i + off) % n]).collect();
-            statistic(&d, &y, embargo_us, cfg.seed).unwrap_or(f64::NAN)
+            statistic(&d, &y, embargo_us, cfg.seed, classes).unwrap_or(f64::NAN)
         })
         .collect();
     let valid: Vec<f64> = nulls.into_iter().filter(|x| x.is_finite()).collect();
@@ -192,7 +220,14 @@ pub fn omnibus(
     for w in [5u32, 15] {
         let sub: Vec<&Sample> = samples.iter().filter(|s| s.width == w).collect();
         if !sub.is_empty() {
-            widths.push(width_omnibus(&sub, w, horizon_bars(w), cfg)?);
+            widths.push(width_omnibus(
+                &sub,
+                w,
+                horizon_bars(w),
+                cfg,
+                Task::Multi,
+                cfg.omnibus_permutations,
+            )?);
         }
     }
     let k = widths.len().max(1) as f64;
@@ -210,6 +245,58 @@ pub fn omnibus(
         } else {
             Verdict::Null
         },
+    })
+}
+
+/// Descriptive decomposition of a positive omnibus: which outcome carries the signal, and
+/// which features matter. Not a promotion test; it informs the next hypothesis cards.
+#[derive(Debug, Clone, Serialize)]
+pub struct Decomposition {
+    pub task: Task,
+    pub widths: Vec<WidthOmnibus>,
+    /// Share of total split gain per feature of a model fit on all discovery rows, per width.
+    pub importance: Vec<(u32, Vec<(String, f64)>)>,
+}
+
+pub fn decompose(
+    samples: &[Sample],
+    cfg: &ResearchConfig,
+    horizon_bars: impl Fn(u32) -> usize,
+    task: Task,
+    perms: usize,
+) -> Result<Decomposition, ResearchError> {
+    let mut widths = Vec::new();
+    let mut importance = Vec::new();
+    for w in [5u32, 15] {
+        let sub: Vec<&Sample> = samples.iter().filter(|s| s.width == w).collect();
+        if sub.is_empty() {
+            continue;
+        }
+        widths.push(width_omnibus(&sub, w, horizon_bars(w), cfg, task, perms)?);
+        // in sample gain importance, for description only
+        let d = prepare(&sub, task);
+        let classes = if task == Task::Multi { 3 } else { 2 };
+        let labels: Vec<f32> = d.y.iter().map(|&v| v as f32).collect();
+        if let Ok(ds) = Dataset::from_slice(&d.x, &labels, d.n_feat as i32, true) {
+            if let Ok(b) = Booster::train(ds, &params(cfg.seed, classes)) {
+                if let Ok(g) = b.feature_importance(lightgbm3::ImportanceType::Gain) {
+                    let tot: f64 = g.iter().sum::<f64>().max(1e-12);
+                    let mut named: Vec<(String, f64)> = feature_names()
+                        .iter()
+                        .zip(g)
+                        .map(|(n, v)| ((*n).to_string(), v / tot))
+                        .collect();
+                    named
+                        .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                    importance.push((w, named));
+                }
+            }
+        }
+    }
+    Ok(Decomposition {
+        task,
+        widths,
+        importance,
     })
 }
 
@@ -267,5 +354,14 @@ mod tests {
         let n = make(false, 2);
         let r0 = omnibus(&n, &c, |_| 8).unwrap();
         assert!(r0.p > 0.05, "null p {}", r0.p);
+    }
+
+    #[test]
+    fn the_directional_task_finds_planted_direction_structure_and_names_the_feature() {
+        let c = cfg();
+        let s = make(true, 3);
+        let d = decompose(&s, &c, |_| 8, Task::Direction, 30).unwrap();
+        assert!(d.widths[0].statistic > 0.02);
+        assert_eq!(d.importance[0].1[0].0, "dist_travelled"); // feature index 1
     }
 }

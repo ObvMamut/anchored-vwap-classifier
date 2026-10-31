@@ -51,6 +51,8 @@ enum ResearchStage {
     Status { config: PathBuf },
     /// Cycle 0: the omnibus predictive structure screen.
     Omnibus { config: PathBuf },
+    /// Descriptive decomposition of the omnibus by outcome (spends no alpha).
+    Diagnose { config: PathBuf },
 }
 
 fn git(args: &[&str]) -> Result<String> {
@@ -123,6 +125,29 @@ fn main() -> Result<()> {
                 let r = vwap_research::cycle::execute_omnibus(&cfg, &commit, &samples, |w| {
                     lab.horizon(w)
                 })?;
+                println!("{}", serde_json::to_string_pretty(&r)?);
+            }
+            ResearchStage::Diagnose { config } => {
+                let cfg = vwap_core::load_research_config(&config)?;
+                let commit = git(&["rev-parse", "HEAD"])?;
+                let data = vwap_core::load_data_config(&config)?;
+                let ev = vwap_core::load_events_config(&config)?;
+                let lab = vwap_core::load_labels_config(&config)?;
+                let bars =
+                    vwap_data::write::read_partitioned(std::path::Path::new(&data.output_dir))?;
+                let samples = vwap_research::data::assemble(&data, &ev, &lab, &bars);
+                let tasks = [
+                    vwap_research::omnibus::Task::Direction,
+                    vwap_research::omnibus::Task::Chop,
+                ];
+                let r = vwap_research::cycle::execute_diagnostic(
+                    &cfg,
+                    &commit,
+                    &samples,
+                    |w| lab.horizon(w),
+                    &tasks,
+                    500,
+                )?;
                 println!("{}", serde_json::to_string_pretty(&r)?);
             }
             ResearchStage::Register { id, config } => {
