@@ -1,0 +1,29 @@
+# Three way split by event time (UTC). An event belongs to a segment only if its
+# touch and its label end both fall inside it.
+discovery_start = "2016-11-15"
+discovery_end = "2021-09-30"
+confirm_start = "2021-10-01"
+confirm_end = "2023-09-30"
+holdout_start = "2023-10-01"
+
+cards_dir = "hypotheses"
+ledger_path = "artifacts/research/ledger.jsonl"
+report_dir = "reports/research"
+
+# Alpha budget: omnibus plus a Bonferroni share per targeted card.
+alpha_total = 0.05
+alpha_omnibus = 0.01
+max_cards = 12
+
+# Verdict thresholds (pre registered).
+default_min_effect = 0.03
+refine_p_max = 0.25
+promote_min_years_same_sign = 4
+min_events_per_arm = 150
+
+bootstrap_draws = 5000
+omnibus_permutations = 1000
+seed = 20260301
+
+# Round trip cost in ticks for net_ticks outcomes: 1 tick slippage per side plus commission.
+cost_ticks = 3.0

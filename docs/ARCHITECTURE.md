@@ -16,7 +16,8 @@ Dependency direction runs from the bottom of the list upward. A crate may depend
 8. `vwap_model`: majority class, multinomial logistic regression, LightGBM multiclass, isotonic and Platt calibration, metrics, threshold tuning, explainability.
 9. `vwap_backtest`: trade simulation with next bar open entry, barrier exits, costs, metrics, cost sweep.
 10. `vwap_report`: plotters charts, spot checks, the Markdown report.
-11. `vwap_cli`: the binary `vwap`. It wires stages and holds the only `anyhow` usage.
+11. `vwap_research`: the closed loop harness of `PROTOCOL.md`: split views, hypothesis cards, the append only ledger with budget enforcement, subset contrast runners and reports. Depends on `vwap_baselines` for the statistics and controls.
+12. `vwap_cli`: the binary `vwap`. It wires stages and holds the only `anyhow` usage.
 
 `vwap_model` depends on `vwap_validation` for splits and on `vwap_core` for the cost constants. The threshold tuner needs a per event net outcome in ticks. That function (`net_ticks_proxy`) lives in `vwap_core` next to the cost model, so `vwap_model` does not depend on `vwap_backtest`.
 

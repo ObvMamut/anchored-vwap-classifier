@@ -17,6 +17,11 @@ enum Command {
         #[command(subcommand)]
         stage: LabelsStage,
     },
+    /// The closed research loop.
+    Research {
+        #[command(subcommand)]
+        stage: ResearchStage,
+    },
     /// Controls and the Phase 3 gate.
     Baselines {
         #[command(subcommand)]
@@ -34,6 +39,40 @@ enum Command {
         #[command(subcommand)]
         stage: DataStage,
     },
+}
+
+#[derive(Subcommand)]
+enum ResearchStage {
+    /// Register a committed hypothesis card.
+    Register { id: String, config: PathBuf },
+    /// Run a registered card on the discovery segment.
+    Run { id: String, config: PathBuf },
+    /// Show the ledger and the remaining budget.
+    Status { config: PathBuf },
+    /// Cycle 0: the omnibus predictive structure screen.
+    Omnibus { config: PathBuf },
+}
+
+fn git(args: &[&str]) -> Result<String> {
+    let out = std::process::Command::new("git").args(args).output()?;
+    anyhow::ensure!(out.status.success(), "git {:?} failed", args);
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The card file must be tracked and have no uncommitted changes.
+fn committed_card(
+    cfg: &vwap_core::ResearchConfig,
+    id: &str,
+) -> Result<(std::path::PathBuf, String)> {
+    let path = std::path::Path::new(&cfg.cards_dir).join(format!("{id}.toml"));
+    let p = path.to_string_lossy().to_string();
+    git(&["ls-files", "--error-unmatch", &p])
+        .map_err(|_| anyhow::anyhow!("{p} is not committed; commit the card first"))?;
+    anyhow::ensure!(
+        git(&["status", "--porcelain", "--", &p])?.is_empty(),
+        "{p} has uncommitted changes; commit the card first"
+    );
+    Ok((path, git(&["rev-parse", "HEAD"])?))
 }
 
 #[derive(Subcommand)]
@@ -67,6 +106,44 @@ enum DataStage {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::Research { stage } => match stage {
+            ResearchStage::Status { config } => {
+                let cfg = vwap_core::load_research_config(&config)?;
+                print!("{}", vwap_research::cycle::status(&cfg)?);
+            }
+            ResearchStage::Omnibus { config } => {
+                let cfg = vwap_core::load_research_config(&config)?;
+                let commit = git(&["rev-parse", "HEAD"])?;
+                let data = vwap_core::load_data_config(&config)?;
+                let ev = vwap_core::load_events_config(&config)?;
+                let lab = vwap_core::load_labels_config(&config)?;
+                let bars =
+                    vwap_data::write::read_partitioned(std::path::Path::new(&data.output_dir))?;
+                let samples = vwap_research::data::assemble(&data, &ev, &lab, &bars);
+                let r = vwap_research::cycle::execute_omnibus(&cfg, &commit, &samples, |w| {
+                    lab.horizon(w)
+                })?;
+                println!("{}", serde_json::to_string_pretty(&r)?);
+            }
+            ResearchStage::Register { id, config } => {
+                let cfg = vwap_core::load_research_config(&config)?;
+                let (path, commit) = committed_card(&cfg, &id)?;
+                let hash = vwap_research::cycle::register(&cfg, &path, &commit)?;
+                println!("registered {id} sha256 {hash} at commit {commit}");
+            }
+            ResearchStage::Run { id, config } => {
+                let cfg = vwap_core::load_research_config(&config)?;
+                let (path, commit) = committed_card(&cfg, &id)?;
+                let data = vwap_core::load_data_config(&config)?;
+                let ev = vwap_core::load_events_config(&config)?;
+                let lab = vwap_core::load_labels_config(&config)?;
+                let bars =
+                    vwap_data::write::read_partitioned(std::path::Path::new(&data.output_dir))?;
+                let samples = vwap_research::data::assemble(&data, &ev, &lab, &bars);
+                let r = vwap_research::cycle::execute(&cfg, &path, &commit, &samples)?;
+                println!("{}", serde_json::to_string_pretty(&r)?);
+            }
+        },
         Command::Labels {
             stage: LabelsStage::Build { config },
         } => {
@@ -123,9 +200,14 @@ fn main() -> Result<()> {
             let ev = vwap_core::load_events_config(&config)?;
             let lab = vwap_core::load_labels_config(&config)?;
             let base = vwap_core::load_baselines_config(&config)?;
-            let val = vwap_core::load_validation_config(&config)?;
+            let res = vwap_core::load_research_config(&config)?;
             let bars = vwap_data::write::read_partitioned(std::path::Path::new(&data.output_dir))?;
-            let r = vwap_baselines::run_baselines(&data, &ev, &lab, &base, &val, &bars)?;
+            // gate 3a is computed on the discovery segment only
+            let window = (
+                vwap_core::ResearchConfig::date_us(&res.discovery_start),
+                vwap_core::ResearchConfig::date_us(&res.confirm_start),
+            );
+            let r = vwap_baselines::run_baselines(&data, &ev, &lab, &base, window, &bars)?;
             println!("{}", vwap_baselines::run::render_markdown(&r));
         }
         Command::Spotcheck { config } => {

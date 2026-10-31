@@ -8,10 +8,7 @@ use std::path::Path;
 
 use chrono::{DateTime, Datelike};
 use serde::Serialize;
-use vwap_core::{
-    BaselinesConfig, Class, DataConfig, EventsConfig, LabelsConfig, ValidationConfig,
-    holdout_start_us,
-};
+use vwap_core::{BaselinesConfig, Class, DataConfig, EventsConfig, LabelsConfig};
 use vwap_data::CleanBars;
 use vwap_events::{CoarseBars, LevelSource, build, detect_level, event_params};
 use vwap_labels::{LabelDrops, LabelParams, Labeled, label_events};
@@ -44,6 +41,10 @@ pub struct FamilyResult {
     pub vwap_ci_raw: [[f64; 2]; NCLASS],
     pub ctrl_ci_raw: [[f64; 2]; NCLASS],
     pub delta_ci: [[f64; 2]; NCLASS],
+    /// 90 percent percentile interval of the rejection gap, for the equivalence verdict.
+    pub rejection_gap_ci90: [f64; 2],
+    /// EQUIVALENT, DIFFERENT or INCONCLUSIVE (gate 3a).
+    pub verdict: String,
     pub total_variation: f64,
     pub wald: f64,
     pub p: f64,
@@ -90,7 +91,9 @@ pub struct GateReport {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BaselineReport {
-    pub holdout_start_utc: String,
+    /// The window the statistics were computed on, in UTC.
+    pub window_start_utc: String,
+    pub window_end_utc: String,
     pub m1: f64,
     pub m2: f64,
     pub widths: Vec<WidthReport>,
@@ -136,11 +139,11 @@ fn labeled_dev(
     params: &vwap_events::EventParams,
     lp: &LabelParams,
     one: &CleanBars,
-    holdout_us: i64,
+    window: (i64, i64),
 ) -> (Vec<Labeled>, LabelDrops) {
     let (events, _) = detect_level(coarse, level, params);
     let (mut labeled, drops) = label_events(&events, coarse, one, lp);
-    labeled.retain(|l| l.t_end_us < holdout_us);
+    labeled.retain(|l| l.event.close_us >= window.0 && l.t_end_us < window.1);
     (labeled, drops)
 }
 
@@ -215,6 +218,14 @@ fn family_result(
         vwap_ci_raw: ci(&|e, c| e.pi_vwap_raw[c]),
         ctrl_ci_raw: ci(&|e, c| e.pi_ctrl_raw[c]),
         delta_ci: ci(&|e, c| e.delta[c]),
+        rejection_gap_ci90: {
+            let sd = crate::stats::sorted(col(&|e| e.delta[0]));
+            [
+                crate::stats::percentile(&sd, 0.05),
+                crate::stats::percentile(&sd, 0.95),
+            ]
+        },
+        verdict: String::new(),
         total_variation: total_variation(&point.pi_vwap_adj, &point.pi_ctrl_adj),
         wald: w,
         p,
@@ -232,15 +243,9 @@ pub fn run_baselines(
     ev: &EventsConfig,
     lab: &LabelsConfig,
     base: &BaselinesConfig,
-    val: &ValidationConfig,
+    window: (i64, i64),
     bars: &CleanBars,
 ) -> Result<BaselineReport, BaselinesError> {
-    let last = bars
-        .ts_us
-        .last()
-        .copied()
-        .ok_or_else(|| BaselinesError::NotEnoughData("no bars".into()))?;
-    let holdout_us = holdout_start_us(last, val.holdout_months);
     let params = event_params(data, ev);
     let mut widths = Vec::new();
     for &w in &ev.timeframes {
@@ -250,8 +255,7 @@ pub fn run_baselines(
             m2: lab.m2,
             horizon: lab.horizon(w),
         };
-        let (vwap_all, vwap_drops) =
-            labeled_dev(&coarse, &coarse.vwap, &params, &lp, bars, holdout_us);
+        let (vwap_all, vwap_drops) = labeled_dev(&coarse, &coarse.vwap, &params, &lp, bars, window);
         if vwap_all.len() < 100 {
             return Err(BaselinesError::NotEnoughData(format!(
                 "only {} VWAP events on {w} minute bars",
@@ -265,7 +269,7 @@ pub fn run_baselines(
             sources
                 .iter()
                 .flat_map(|s| {
-                    labeled_dev(&coarse, &s.levels(&coarse), &params, &lp, bars, holdout_us).0
+                    labeled_dev(&coarse, &s.levels(&coarse), &params, &lp, bars, window).0
                 })
                 .collect()
         };
@@ -307,8 +311,7 @@ pub fn run_baselines(
             for &m2 in &lab.grid.m2 {
                 for &h in horizons {
                     let cell = LabelParams { m1, m2, horizon: h };
-                    let (l, _) =
-                        labeled_dev(&coarse, &coarse.vwap, &params, &cell, bars, holdout_us);
+                    let (l, _) = labeled_dev(&coarse, &coarse.vwap, &params, &cell, bars, window);
                     let d = describe("grid", &l);
                     let n = d.events.max(1) as f64;
                     grid.push(GridCell {
@@ -350,9 +353,17 @@ pub fn run_baselines(
             f.p_holm = it.next().unwrap_or(1.0);
         }
     }
+    for w in &mut widths {
+        for f in &mut w.families {
+            f.verdict = equivalence_verdict(f, base);
+        }
+    }
     let gate = evaluate_gate(&widths, base);
     let report = BaselineReport {
-        holdout_start_utc: DateTime::from_timestamp_micros(holdout_us)
+        window_start_utc: DateTime::from_timestamp_micros(window.0)
+            .unwrap_or_default()
+            .to_rfc3339(),
+        window_end_utc: DateTime::from_timestamp_micros(window.1)
             .unwrap_or_default()
             .to_rfc3339(),
         m1: lab.m1,
@@ -364,7 +375,20 @@ pub fn run_baselines(
     Ok(report)
 }
 
-/// The pre registered gate: for every control family, at least one timeframe must have
+/// Gate 3a verdict from the 90 percent interval of the rejection gap and the margin delta_min.
+pub fn equivalence_verdict(f: &FamilyResult, base: &BaselinesConfig) -> String {
+    let gap = f.estimates.delta[Class::Rejection.index()];
+    let [lo, hi] = f.rejection_gap_ci90;
+    if f.p_holm < base.alpha && gap.abs() > base.delta_min {
+        "DIFFERENT".into()
+    } else if lo > -base.delta_min && hi < base.delta_min {
+        "EQUIVALENT".into()
+    } else {
+        "INCONCLUSIVE".into()
+    }
+}
+
+/// The first version of the gate, kept for the record: for every control family, at least one timeframe must have
 /// a Holm adjusted p value below alpha and a rejection frequency gap above delta_min,
 /// and the sign of that gap must agree across timeframes.
 pub fn evaluate_gate(widths: &[WidthReport], base: &BaselinesConfig) -> GateReport {
@@ -412,33 +436,12 @@ fn pct(x: f64) -> String {
 
 pub fn render_markdown(r: &BaselineReport) -> String {
     let mut s = String::new();
-    s.push_str("# Baselines gate report\n\n");
+    s.push_str("# Gate 3a, marginal equivalence report\n\n");
     s.push_str(&format!(
-        "Development data only. The holdout starts at {}. Label cell: m1 = {}, m2 = {}.\n\n",
-        r.holdout_start_utc, r.m1, r.m2
+        "Window {} to {} (discovery segment). Label cell: m1 = {}, m2 = {}.\n\n",
+        r.window_start_utc, r.window_end_utc, r.m1, r.m2
     ));
-    s.push_str(&format!(
-        "## Gate result: {}\n\n",
-        if r.gate.passed {
-            "PASSED"
-        } else {
-            "FAILED, stop and document"
-        }
-    ));
-    s.push_str(&format!(
-        "Rule: for every control family at least one timeframe needs a Holm adjusted p value below {} and a rejection frequency gap above {}, with the same sign across timeframes.\n\n",
-        r.gate.alpha,
-        pct(r.gate.delta_min)
-    ));
-    for f in &r.gate.families {
-        s.push_str(&format!(
-            "* {}: {} (significant and large on timeframes {:?}, sign consistent: {})\n",
-            f.family,
-            if f.passes { "pass" } else { "fail" },
-            f.widths_significant_and_large,
-            f.sign_consistent
-        ));
-    }
+    s.push_str("Tier 3a is reported and never decisive. Verdicts use the 90 percent interval of the rejection gap against the margin delta_min: EQUIVALENT if the interval lies inside the margin, DIFFERENT if the Holm adjusted p is below alpha and the gap exceeds the margin, INCONCLUSIVE otherwise. Tier 3b, the research loop, decides whether the project continues.\n");
     for w in &r.widths {
         s.push_str(&format!("\n## {} minute bars\n\n", w.width));
         let n = w.vwap.events.max(1) as f64;
@@ -455,26 +458,22 @@ pub fn render_markdown(r: &BaselineReport) -> String {
         for f in &w.families {
             let e = &f.estimates;
             s.push_str(&format!(
-                "* Control {} ({} events, strata coverage {}): VWAP rejection {} versus control {} (gap {}, 95 percent interval {} to {}), breakthrough gap {}, chop gap {}. Wald {:.2}, p {:.4}, Holm adjusted p {:.4}. Total variation {:.3}. Effective sample size of VWAP rejection frequency {:.0}.\n",
+                "* {} ({} events, strata coverage {}): {}. VWAP rejection {} versus control {}, gap {}, 90 percent interval {} to {}. Wald p {:.4}, Holm adjusted p {:.4}.\n",
                 f.family,
                 f.desc.events,
                 pct(e.coverage),
+                f.verdict,
                 pct(e.pi_vwap_adj[0]),
                 pct(e.pi_ctrl_adj[0]),
                 pct(e.delta[0]),
-                pct(f.delta_ci[0][0]),
-                pct(f.delta_ci[0][1]),
-                pct(e.delta[1]),
-                pct(e.delta[2]),
-                f.wald,
+                pct(f.rejection_gap_ci90[0]),
+                pct(f.rejection_gap_ci90[1]),
                 f.p,
-                f.p_holm,
-                f.total_variation,
-                f.n_eff_vwap_rejection
+                f.p_holm
             ));
         }
     }
-    s.push_str("\nThe gate tests unconditional class frequencies. A failure does not prove that features cannot predict outcomes conditionally.\n");
+    s.push_str("\nThis tier tests unconditional frequencies, so it never ruled out a feature conditioned effect.\n");
     s
 }
 

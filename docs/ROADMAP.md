@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: Phases 1 and 2 are done. Phase 3 ran and **the gate failed** (see `DECISIONS.md`, section 5), so the project stops at Phase 3 under the stop rule below. Phases 4 to 7 are not started.
+Status: Phases 1 and 2 are done. Phase 3 as first specified ran and its marginal gate failed (see `DECISIONS.md`, section 5). The owner approved a redesign: gate 3 is now two tiers (3a equivalence verdict, 3b conditional screen) and the later phases run as a closed research loop under `PROTOCOL.md`, with a three way data split (discovery, confirmation, holdout).
 
 Seven phases. Each has deliverables, tests, an exit criterion and a go or no go decision. A gate failure stops the project at that phase and produces a written report. Phases do not overlap: a phase starts only after the previous gate decision is recorded in `DECISIONS.md`.
 
@@ -36,7 +36,7 @@ Exit criteria: visual check of **20 random days** by the owner, using the checkl
 
 **Go or no go**: go after the owner signs off the visual check. No go while any chart shows a rule violation.
 
-## Phase 3: Labels plus base rates versus controls. GATE
+## Phase 3: Labels plus base rates versus controls. GATE (two tiers: 3a equivalence verdict, 3b conditional screen)
 
 Crates: `vwap_labels`, `vwap_baselines`.
 
@@ -93,6 +93,10 @@ Deliverables: freeze document (all choices), holdout lock, one holdout run, `rep
 Exit criteria: the lock file exists and the run happened once. The report states every deviation from the protocol.
 
 **Go or no go**: the result is reported as it comes out. There is no second run.
+
+## Phase R: the closed research loop (replaces Phases 4 to 6 as a sequence)
+
+Phases 4 (features), 5 (models) and 6 (backtest) now run inside the loop of `PROTOCOL.md`. Features are written one at a time because a card needs them, each with its lookahead proptest. The omnibus screen (cycle 0) comes first. Each targeted card ends in PROMOTE, REFINE or DROP. A PROMOTE is a checkpoint: the owner is asked before the card is run once on the confirmation segment. The cost aware backtest and the holdout run (Phase 7) apply only to a card that survives confirmation. If the budget is spent with nothing promoted, the project stops with a negative result.
 
 ## Risks and mitigations
 

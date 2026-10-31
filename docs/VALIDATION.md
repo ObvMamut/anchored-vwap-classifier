@@ -26,7 +26,7 @@ Config validation rejects a smaller value. The default is $h = T\,w$ plus one fu
 
 The purge also applies to test events: a test event whose features look back into a period used for training is fine, because features use past data only. Test labels may extend past $b_f$; that is allowed, because the next fold's training set purges against its own test start, and the final fold's test labels are bounded by the end of the development range.
 
-With about 15 years of data, a 2 year holdout, a 3 year first training window and 6 month steps, the development range has about 13 years and about 20 test folds covering about 10 years out of sample. Exact counts are computed from the data and written to the validation report.
+The data spans about 8.9 years. Under the three way split of `PROTOCOL.md` the research loop works inside a discovery segment of about 4.9 years and uses blocked cross validation. The rolling 3 year train and 6 month test scheme above applies to the final model, trained on discovery plus confirmation (about 6.9 years) and tested on the holdout. Exact counts are computed from the data and written to the validation report.
 
 The inner splits in `MODELING.md` use the same routine with blocks in place of fold windows.
 

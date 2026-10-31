@@ -4,7 +4,7 @@ Conventions for anyone (human or agent) working in this repository. Read this fi
 
 ## Project in five lines
 
-1. Instrument: NQ (Nasdaq 100 futures), about 15 years of 1 minute OHLCV bars in `data.parquet`.
+1. Instrument: NQ (Nasdaq 100 futures), about 8.9 years (2016-11 to 2025-10) of 1 minute OHLCV bars in `data.parquet`.
 2. Event: a 5 or 15 minute bar whose range contains the daily anchored VWAP (a "touch").
 3. Label: REJECTION, BREAKTHROUGH or CHOP from a volatility scaled triple barrier.
 4. Question: do features known at the touch predict the class better than base rates, with an edge that survives costs?
@@ -20,6 +20,7 @@ Status: documentation phase. No Rust code exists yet and none is written until t
 4. **Never compute VWAP on back adjusted prices.** Prices are never adjusted anywhere in the pipeline.
 5. **No Python anywhere in the pipeline or the repository.**
 6. Every experiment is logged and counted (see `docs/VALIDATION.md`).
+7. **The research loop follows `docs/PROTOCOL.md`.** Hypotheses are written as cards before they are run, runs touch the discovery segment only, the budget of looks is enforced by the ledger, confirmation data is used once per promoted card, and the holdout once at the end. Never peek at confirmation or holdout rows.
 
 ## The no lookahead rule, operationally
 
@@ -46,9 +47,11 @@ crates/   vwap_core        shared types, typed config, errors, cost constants
           vwap_validation  purged walk forward, holdout, experiment log, DSR, PBO
           vwap_backtest    trade simulation, costs, metrics
           vwap_report      plotters charts and the Markdown report
+          vwap_research    closed loop harness: split views, cards, ledger, runners
           vwap_cli         binary named vwap, one subcommand per stage
 docs/     ARCHITECTURE DATA EVENTS LABELING FEATURES BASELINES MODELING
-          VALIDATION BACKTEST ROADMAP DECISIONS GLOSSARY
+          VALIDATION BACKTEST ROADMAP DECISIONS GLOSSARY PROTOCOL
+hypotheses/   one TOML card per hypothesis
 data.parquet   raw input, stays at the repository root
 data/ artifacts/ reports/   generated output, git ignored
 ```
@@ -95,6 +98,9 @@ vwap backtest run config
 vwap spotcheck config
 vwap report build config
 vwap holdout run config
+vwap research run H001 config
+vwap research status config
+vwap research confirm H001 config
 ```
 
 `vwap calendar fetch` is the only stage allowed to use the network. `vwap holdout run` works once only; it writes a lock file and refuses to run again.

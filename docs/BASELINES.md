@@ -60,17 +60,19 @@ Stratification as implemented: 24 clock hour buckets of the touch bar close in N
 
 Other implemented details: the random control level is $\ell = O_{\text{first bar}} + z\,\mathrm{ATR}_{\text{previous bar}}$ with $z$ drawn from $\mathrm{Uniform}[-Z, Z]$, a level count $K_{\text{ctrl}} = 10$ per session, and a draw that depends only on the seed, the level index and the session key. The shifted anchors are 11:00 and 13:00 New York time. All statistics use development data only: events whose label ends at or after the holdout start are removed.
 
-## 5. Gate (pre registered)
+## 5. Gate 3, two tiers
 
-Continue to Phase 4 only if, on the pre registered primary label cell:
+The first version of this gate (a single pass or fail on the marginal class mix) failed on development data, see `DECISIONS.md`. Its weakness: with symmetric barriers every level gives about 50 percent rejection, so it cannot see a conditional edge, and "not significantly different" is not evidence of equivalence. The gate is now two tiers.
 
-1. for **every** control family (1, 2a, 2b), at least one timeframe has Holm adjusted $p < 0.05$, and
-2. in that timeframe the absolute difference in rejection frequency exceeds $\delta_{\min}$ (config, default 2 percentage points), and
-3. the sign of the rejection difference agrees across the two timeframes.
+**3a, marginal equivalence (reported, never decisive).** For each control family and timeframe, with $\Delta = \Delta_{\mathrm{REJ}}$ and margin $\delta$ = `delta_min` (2 percentage points):
 
-If the gate fails, the pipeline stops. Write `reports/gate_baselines.md` stating the numbers, the intervals, and the conclusion "no detectable difference between anchored VWAP outcomes and controls". Do not search other cells or parameters to rescue the result. Exploring other cells after a failure is allowed only as a clearly labeled new study with its trial count added.
+* **EQUIVALENT** if the 90 percent percentile interval of $\Delta$ lies inside $(-\delta, +\delta)$ (two one sided tests at 5 percent).
+* **DIFFERENT** if the Holm adjusted $p < 0.05$ and $|\Delta| > \delta$.
+* **INCONCLUSIVE** otherwise, which usually means too little overlap (low stratum coverage) or too wide an interval.
 
-Note recorded for transparency: the gate tests unconditional class frequencies. A failure does not prove that features cannot predict outcomes conditionally. The rule is kept anyway, as specified by the owner, because a feature conditioned edge on a level whose outcomes look like noise is more likely an artifact.
+**3b, conditional screen (decisive).** Whether the project continues is decided by the research loop of `PROTOCOL.md`: the omnibus screen and the targeted hypothesis cards, on the discovery segment only. Gate 3b passes if at least one card is PROMOTED. If the budget is spent without one, the project stops and the negative result is reported.
+
+Remark kept from the first version: tier 3a tests unconditional frequencies, so it never ruled out a feature conditioned effect.
 
 ## 6. Tests
 

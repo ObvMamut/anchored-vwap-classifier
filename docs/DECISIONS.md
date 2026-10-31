@@ -94,3 +94,29 @@ These were measured by `vwap data clean config`. They override the assumptions i
 ## 9. Environment note
 
 Debug builds with full debug info filled the disk (every test binary links polars). The workspace now sets `debug = 0` and `incremental = false` for the dev and test profiles.
+
+## 10. Redesign approved by the owner after the failed gate
+
+1. **Three way split.** Discovery 2016-11-15 to 2021-09-30, confirmation 2021-10-01 to 2023-09-30, holdout 2023-10-01 to 2025-10-01. The Phase 3 gate had used a holdout starting 2023-10-01T04:12 UTC and everything before it; the holdout rows were never touched. Confirmation rows were used in that first Phase 3 run as part of development data, so the first marginal numbers (section 5) are labeled as such. Confirmation is used once per promoted card from now on.
+2. **Gate 3 is two tier** (`docs/BASELINES.md`, section 5). 3b alone decides whether the project continues.
+3. **Closed research loop** under `docs/PROTOCOL.md` with an enforced budget: omnibus $\alpha = 0.01$ plus at most 12 cards sharing $0.04$.
+4. **Autonomy.** The agent runs cycles on its own and stops only for a PROMOTE, a protocol change, any holdout use, or budget exhaustion.
+5. **Statistical honesty.** With about 6,000 discovery events at 15 minutes, the minimum detectable subset effect at the card alpha is about 4 points, while the economic break even is only about 1 point. The loop can find large effects and cannot establish small ones. Cards report their MDE.
+
+## 11. Gate 3a result on the discovery segment
+
+Run with `vwap baselines run config` (window 2016-11-15 to 2021-09-30). Anchored VWAP outcomes: 5 minute bars 9,766 events, rejection 47.9, breakthrough 49.6, chop 2.5 percent; 15 minute bars 4,879 events, rejection 44.5, breakthrough 46.3, chop 9.2 percent. Verdicts with the 90 percent interval of the rejection gap and margin 2 percentage points:
+
+* random horizontal levels, 5 minute: **EQUIVALENT** (gap 0.0, interval $-0.8$ to $+0.9$).
+* random horizontal levels, 15 minute: INCONCLUSIVE (gap $-1.3$, interval $-2.6$ to $+0.1$, just outside the margin).
+* shifted anchor VWAP and previous session VWAP, both timeframes: INCONCLUSIVE (wide intervals from low overlap).
+* No comparison is DIFFERENT.
+
+Reading: at the level of the marginal class mix the VWAP behaves like an arbitrary level, to within about 2 points, which is what the loop assumes. This tier never decides the project; tier 3b does.
+
+## 12. Implementation notes for the research harness
+
+1. The omnibus null uses circular shifts of the label sequence and not within session shuffles (corrected in `PROTOCOL.md` before any real run, because a within session shuffle keeps between session associations).
+2. The difference in differences against control levels is not computed yet. It becomes required before any confirmation.
+3. For a card the combined $p$ is the larger of the two timeframes, so both must pass, which also corrects for looking at two timeframes.
+4. Positive and negative harness controls run at the start of every `vwap research run` and omnibus run (`selftest.rs`).

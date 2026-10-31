@@ -16,6 +16,7 @@ vwap_events = { path = "../vwap_events" }
 vwap_report = { path = "../vwap_report" }
 vwap_labels = { path = "../vwap_labels" }
 vwap_baselines = { path = "../vwap_baselines" }
+vwap_research = { path = "../vwap_research" }
 anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true

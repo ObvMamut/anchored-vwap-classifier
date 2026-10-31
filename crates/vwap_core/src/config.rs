@@ -281,3 +281,75 @@ pub fn holdout_start_us(last_ts_us: i64, holdout_months: u32) -> i64 {
         .and_then(|d| d.checked_sub_months(Months::new(holdout_months)))
         .map_or(last_ts_us, |d| d.timestamp_micros())
 }
+
+/// `config/research.toml`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResearchConfig {
+    pub discovery_start: String,
+    pub discovery_end: String,
+    pub confirm_start: String,
+    pub confirm_end: String,
+    pub holdout_start: String,
+    pub cards_dir: String,
+    pub ledger_path: String,
+    pub report_dir: String,
+    pub alpha_total: f64,
+    pub alpha_omnibus: f64,
+    pub max_cards: usize,
+    pub default_min_effect: f64,
+    pub refine_p_max: f64,
+    pub promote_min_years_same_sign: usize,
+    pub min_events_per_arm: usize,
+    /// Round trip cost in ticks used by `net_ticks` outcomes.
+    pub cost_ticks: f64,
+    pub bootstrap_draws: usize,
+    pub omnibus_permutations: usize,
+    pub seed: u64,
+}
+
+impl ResearchConfig {
+    /// Alpha share of one targeted card.
+    pub fn alpha_per_card(&self) -> f64 {
+        (self.alpha_total - self.alpha_omnibus) / self.max_cards as f64
+    }
+
+    pub fn validate(&self) -> Result<(), CoreError> {
+        if self.alpha_omnibus >= self.alpha_total || self.max_cards == 0 {
+            return Err(CoreError::ConfigInvalid(
+                "alpha_omnibus must be below alpha_total and max_cards positive".into(),
+            ));
+        }
+        let parse = |s: &str| {
+            chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map_err(|e| CoreError::ConfigInvalid(format!("bad date {s:?}: {e}")))
+        };
+        let (a, b, c, d, e) = (
+            parse(&self.discovery_start)?,
+            parse(&self.discovery_end)?,
+            parse(&self.confirm_start)?,
+            parse(&self.confirm_end)?,
+            parse(&self.holdout_start)?,
+        );
+        if !(a < b && b < c && c < d && d < e) {
+            return Err(CoreError::ConfigInvalid(
+                "split dates must be strictly increasing: discovery, confirmation, holdout".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// UTC microseconds at 00:00 of a split date.
+    pub fn date_us(s: &str) -> i64 {
+        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            .ok()
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .map_or(0, |d| d.and_utc().timestamp_micros())
+    }
+}
+
+pub fn load_research_config(dir: &Path) -> Result<ResearchConfig, CoreError> {
+    let cfg: ResearchConfig = read_toml(dir, "research.toml")?;
+    cfg.validate()?;
+    Ok(cfg)
+}
