@@ -53,10 +53,31 @@ These are the starting values. They are fixed once in config, committed, and not
 
 ## 5. Gate decisions (filled in as the project proceeds)
 
-* Phase 1 exit: not yet.
+* Phase 1 exit: passed with deviations, decided by the implementing agent and open for the owner to overrule. The roadmap no go condition (series cannot be confirmed as raw front month with identifiable rolls) is technically met, because rolls are not identifiable in this file. It was waived because its purpose is to prevent VWAP contamination by adjusted or stitched prices, and the evidence shows an unadjusted continuous series with no visible roll steps, while the VWAP resets every session. If the owner can supply per contract data, Phase 1 should be redone on it. Other Phase 1 exit criteria: all quality checks run and reported; prices unchanged versus raw (tested); bar label confirmed by data (open); both library spikes done with a documented fallback for the multiclass TreeSHAP sizing problem.
 * Phase 2 visual check sign off: not yet.
 * Phase 3 baseline gate: not yet.
 * Phase 4 lookahead matrix: not yet.
 * Phase 5 model gate: not yet.
 * Phase 6 backtest gate: not yet.
 * Phase 7 holdout run: not yet. Lock file absent.
+
+## 6. Phase 1 findings, measured on data.parquet
+
+These were measured by `vwap data clean config`. They override the assumptions in sections 1 and 3 where they differ.
+
+1. **Row order and span.** The file is sorted newest first (every step is descending). The loader sorts ascending. It holds 3,077,548 one minute bars from 2016-11-15 to 2025-10-01, about 8.9 years and not 15. Consequence: with a 2 year holdout the development range is about 7 years, so a 3 year training window with 6 month steps gives about 8 test folds and not 20.
+2. **Volume is zero on every row** of every year. Only `TickVolume` carries activity (mean about 123 per bar). The VWAP weight is therefore `tick_volume` (config `weight_column`). This departs from the owner's answer "Volume" and is reversible by config, but the Volume column cannot be used. Tick counts are a common proxy for volume on index CFD feeds, but they are not traded contracts, and all volume features inherit that caveat.
+3. **The prices are not exchange NQ prints.** 100 percent of prices lie on a 0.1 point grid and only 20 percent on a 0.25 grid. This is a broker style continuous index series with CME like trading hours, used here as a proxy for NQ. Costs are still modelled in NQ ticks of 0.25 points worth 5 USD.
+4. **The timestamps are not UTC.** The daily gap sits at a fixed label hour all year, and the weekly gap is 2941 minutes. This is broker server time, equal to New York time plus 7 hours with US style daylight saving, stored as if it were UTC. With `timestamp_kind = "server_ny_synced"` and `server_offset_hours = 7` the cleaned series shows the CME maintenance break at exactly 17:00 to 18:00 New York (1553 of 1559 scheduled breaks begin with an 18:00 bar), a Friday 16:59 to Sunday 18:00 weekly gap, and zero ambiguous or non existent local times. The cleaned files store true UTC.
+5. **Bar label is open.** Sessions open with an 18:00 bar and the last bar before the break is stamped 16:59. The stage fails if this ever contradicts `bar_label`.
+6. **Rolls cannot be identified.** The series is not back adjusted (yearly first closes of about 4,700 in 2016, 12,900 in 2021 and 21,100 in 2025 match real nominal NQ levels), but it also shows no roll steps. The median absolute step at a session boundary is 4.7 points, the 99th percentile is 121 points, steps at the predicted roll boundaries are about 0 to 5 points (a real NQ roll carries roughly 50 to 200 points of spread), and only 4 of 36 expiries exceed the 99th percentile, at inconsistent offsets that are mostly weekend gaps. Conclusion: this is a continuous series whose vendor already handles the roll. The roll buffer flag is still applied conservatively at the calendar predicted boundary (first session after the third Friday minus 8 days). The owner's calendar rule claim cannot be verified from this file.
+7. **Data quality by year.** 2017 to 2020 are much gappier (about 300 to 470 unexpected gaps over 5 minutes per year) than 2021 to 2024 (25 to 37 per year). 2025 has 187. 145 of 2302 sessions are thin (under 90 percent of 1380 bars), 266 end before 16:55. Full US holidays (for example Thanksgiving, MLK Day) still trade until about 13:00, so the holiday rules list them for review but the thin session flag is what protects the events.
+8. **Outliers.** 4,551 one minute return outliers (robust score above 12) and 70 range outliers are flagged, not removed.
+
+## 7. Implementation deviations from the earlier docs
+
+1. `roll_table.json` and `quality_report.json` are written as JSON under `artifacts/data/`, not parquet. Sessions are derived from the `globex_session` column of the cleaned bars and are not written as a separate table.
+2. Outlier statistics use the previous block of `outlier_window_bars` bars (causal) instead of a window of prior sessions.
+3. `indexing_slicing` is denied workspace wide, but numeric kernel modules (`clean`, `quality`, `roll`, `write` in `vwap_data`) allow it with a comment, because they index equal length columns with indices produced by iterating those columns. Test code allows `unwrap`, `expect` and indexing.
+4. **`lightgbm3` multiclass `predict_contrib` is unsafe to call.** Version 1.0.11 allocates `n_rows * (F + 1)` doubles, but LightGBM writes `n_rows * K * (F + 1)` for $K$ classes, a heap overflow inside the C call. The booster handle is private, so the C API cannot be reached safely. Plan for Phase 5: compute multiclass TreeSHAP in safe Rust from the LightGBM text model (`Booster::save_string`) and verify it against `predict_contrib` on binary models, where the sizing is correct. The spike test `lightgbm_binary_treeshap_is_additive` covers the binary case.
+5. Spike results (Phase 1): LightGBM builds with cmake in this environment, trains deterministically with the documented settings, supports early stopping with a validation set; `linfa-logistic` 0.8 provides `MultiLogisticRegression` with an L2 `alpha` and `predict_probabilities`.

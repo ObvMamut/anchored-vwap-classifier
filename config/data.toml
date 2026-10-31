@@ -1,0 +1,27 @@
+input_path = "data.parquet"
+output_dir = "data/clean"
+artifact_dir = "artifacts/data"
+# How the DateTime column relates to real time. The file was found to be broker
+# server time (New York plus 7 hours with US style DST) stored as if it were UTC.
+timestamp_kind = "server_ny_synced"
+server_offset_hours = 7
+# bar_label is checked against the session boundaries in the data.
+bar_label = "open"
+session_anchor = "globex"
+# Volume is zero on every row of this file, so VWAP is weighted by tick volume.
+weight_column = "tick_volume"
+price_grid = 0.1
+drop_invalid_bars = true
+roll_offset_days = 8
+roll_buffer_sessions = 1
+roll_confirm_percentile = 0.99
+roll_search_window_days = 21
+max_gap_minutes_ok = 2
+max_gap_minutes_event = 5
+outlier_z = 12.0
+outlier_window_bars = 1000
+max_range_median_multiple = 40.0
+min_bars_fraction = 0.9
+early_close_time = "13:15"
+flat_time_globex = "16:55"
+flat_time_rth = "16:00"

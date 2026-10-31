@@ -8,22 +8,22 @@ File: `data.parquet` at the repository root (path from config).
 
 Columns found in the file footer: `DateTime`, `Open`, `High`, `Low`, `Close`, `Volume`, `TickVolume`. There is no symbol, contract, bid volume or ask volume column.
 
-Facts given by the owner and treated as the contract:
+Facts given by the owner, and what the data actually showed (details in `DECISIONS.md`, section 6):
 
-1. 1 minute bars only. 5 and 15 minute bars are built by aggregation in `vwap_events`.
-2. Timestamps are UTC.
-3. The series is a raw front month series, rolled by a calendar rule. Prices are real traded prices of the front month at each time, not adjusted.
-4. VWAP weight is `Volume`. `TickVolume` is kept for cross checks and one optional feature.
+1. 1 minute bars only. 5 and 15 minute bars are built by aggregation in `vwap_events`. Confirmed. The file is sorted newest first and the loader sorts it.
+2. Stated: timestamps are UTC. Measured: they are broker server time, New York plus 7 hours with US daylight saving, stored as UTC. Config `timestamp_kind = "server_ny_synced"` and `server_offset_hours = 7` convert them. The cleaned files hold true UTC.
+3. Stated: a raw front month series rolled by a calendar rule. Measured: not back adjusted, but no roll steps are visible, so it behaves like a continuous vendor series. Prices are on a 0.1 grid (config `price_grid`), not the 0.25 NQ grid.
+4. Stated: VWAP weight is `Volume`. Measured: `Volume` is zero on every row. The weight is `TickVolume` (config `weight_column = "tick_volume"`).
 
 Loader requirements, each a hard error if violated:
 
 * Timestamps are strictly increasing after de duplication, normalised to `Datetime(Microseconds, "UTC")`. A naive datetime column is interpreted as UTC. A timezone aware column is converted to UTC.
-* Prices are finite `f64`, positive, and lie on the tick grid: $\frac{P}{0.25}$ is an integer within $10^{-6}$. Violations are counted and reported, not repaired.
+* Prices are finite `f64`, positive, and lie on the price grid of the series: $\frac{P}{g}$ is an integer within $10^{-6}$ with $g$ = `price_grid` (0.1 for this file; 0.25 for exchange NQ). Violations are counted and reported, not repaired.
 * `Volume` is finite and non negative.
 
-### Open item: bar timestamp convention
+### Bar timestamp convention (resolved: open)
 
-The file does not say whether `DateTime` marks the bar open or the bar close. The pipeline assumes **open time** (config `bar_label = "open"`). A diagnostic in the Phase 1 data report tests this on the data: the first bar of a Globex session should be stamped 18:00 New York if the label is the open, and 18:01 if it is the close; the last bar before the daily maintenance break should be stamped 16:59 or 17:00 respectively. The diagnostic fails the stage if the evidence contradicts the config value. A wrong convention shifts every event by one bar and would itself be a lookahead error, so this check is mandatory.
+The file does not say whether `DateTime` marks the bar open or the bar close. The pipeline assumes **open time** (config `bar_label = "open"`) and the stage verifies it on every run. On this file the check confirms open labels: the first bar of a Globex session should be stamped 18:00 New York if the label is the open, and 18:01 if it is the close; the last bar before the daily maintenance break should be stamped 16:59 or 17:00 respectively. The diagnostic fails the stage if the evidence contradicts the config value. A wrong convention shifts every event by one bar and would itself be a lookahead error, so this check is mandatory.
 
 ## 2. Contract rolls
 
@@ -41,7 +41,7 @@ For each predicted roll the diagnostic measures the discontinuity at the first s
 
 $$ \Delta_r = O_{\text{first bar after}} - C_{\text{last bar before}} $$
 
-and compares $|\Delta_r|$ with the distribution of ordinary overnight gaps over the whole sample (median and 99th percentile). The report lists, for each expiry, $\Delta_r$ at offsets from 0 to 14 days so the owner can see which offset produces a systematic step. Output: `roll_table.parquet` with columns expiry, predicted roll date, observed roll boundary, $\Delta_r$, and a `confirmed` flag. A roll is `confirmed` when $|\Delta_r|$ exceeds the 99th percentile of ordinary gaps. Unconfirmed rolls are listed for manual review and stop the stage until the owner accepts them in config.
+and compares $|\Delta_r|$ with the distribution of ordinary overnight gaps over the whole sample (median and 99th percentile). The report lists, for each expiry, $\Delta_r$ at offsets from 0 to 14 days so the owner can see which offset produces a systematic step. Output: `roll_table.json` with columns expiry, predicted roll date, observed roll boundary, $\Delta_r$, and a `confirmed` flag. A roll is `confirmed` when $|\Delta_r|$ exceeds the 99th percentile of ordinary gaps. Unconfirmed rolls are listed for manual review and stop the stage until the owner accepts them in config.
 
 ### 2.2 Rules that follow from a raw series
 
@@ -91,8 +91,7 @@ Each check has a threshold in config, an action, and a line in `quality_report.j
 ## 6. Output
 
 * `data/clean/year=YYYY/part0.parquet`: cleaned 1 minute bars, same columns as input plus `session_id`, `trading_date`, `is_early_close`, `flags` (bitmask for gap, outlier, thin session, roll buffer). Partitioned by calendar year of the UTC timestamp.
-* `data/clean/roll_table.parquet`.
-* `data/clean/sessions.parquet`: one row per session with anchor time, end time, flat time, bar counts, flags.
+* `artifacts/data/roll_table.json`. Sessions are identified by the `globex_session` column.
 * `artifacts/data/quality_report.json` and `artifacts/data/manifest.json` (input file hash, output hashes, row counts per year, config hash, git SHA).
 * Config keys (all in `config/data.toml`): `input_path`, `bar_label`, `session_anchor`, `roll_offset_days`, `roll_buffer_sessions`, `max_gap_minutes_ok`, `max_gap_minutes_event`, `outlier_z`, `max_range_atr_multiple`, `min_bars_fraction`, `early_close_time`, `flat_time_globex`, `flat_time_rth`.
 
