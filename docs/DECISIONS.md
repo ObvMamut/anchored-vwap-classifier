@@ -120,3 +120,15 @@ Reading: at the level of the marginal class mix the VWAP behaves like an arbitra
 2. The difference in differences against control levels is not computed yet. It becomes required before any confirmation.
 3. For a card the combined $p$ is the larger of the two timeframes, so both must pass, which also corrects for looking at two timeframes.
 4. Positive and negative harness controls run at the start of every `vwap research run` and omnibus run (`selftest.rs`).
+
+## 13. Cycle 0 result and its analysis (discovery segment)
+
+**Cycle 0, omnibus (multiclass), alpha 0.01 spent.** LightGBM with fixed settings, expanding blocked cross validation, 1,000 circular shift permutations. Log loss improvement over the training frequencies: 0.0116 on 5 minute bars (9,766 events, p = 0.001) and 0.0709 on 15 minute bars (4,879 events, p = 0.001). Verdict: structure.
+
+**Analysis (diagnostic, no alpha, `omnibus_decomposition`).**
+* Direction task (breakthrough versus rejection among resolved events): improvement $-0.0024$ (5 minute, p = 0.19) and $-0.0054$ (15 minute, p = 0.30). **No directional structure** in any of the 17 features, even with a flexible nonlinear model.
+* Chop task (chop versus barrier hit): improvement 0.0150 and 0.0782 (p = 0.002, the minimum with 500 permutations). Importance is dominated by `minutes_since_anchor` and `minute_of_day` (about 60 percent of gain on 5 minute and 84 percent on 15 minute bars). This is a time of day volatility effect on how often a $1\sigma$ barrier is hit within the horizon, unrelated to VWAP.
+
+**Conclusion.** The omnibus "structure" is the mundane chop and clock effect. The project question, whether features at a VWAP touch predict rejection versus breakthrough, shows no signal at the omnibus level.
+
+**Flaw found in the protocol.** The card outcome `rejection` is the indicator of the REJECTION class, which equals $(1 - P_{\text{chop}})\,P(\text{rej} \mid \text{resolved})$. Any feature related to chop, above all time of day, would make a card on `rejection` look significant through chop alone. The directional hypothesis needs the outcome conditional on resolution. Changing the outcome definition is a protocol change and needs the owner's decision.
