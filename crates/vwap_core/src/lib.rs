@@ -10,7 +10,8 @@ pub mod error;
 pub mod types;
 
 pub use config::{
-    BarLabel, DataConfig, HhMm, SessionAnchor, TimestampKind, WeightColumn, load_data_config,
+    BarLabel, DataConfig, EventsConfig, HhMm, SessionAnchor, TimestampKind, ValidationConfig,
+    VwapReference, WeightColumn, load_data_config, load_events_config, load_validation_config,
 };
 pub use consts::{POINT_VALUE_USD, TICK_SIZE, TICK_VALUE_USD};
 pub use error::CoreError;

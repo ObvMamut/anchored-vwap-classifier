@@ -1,0 +1,10 @@
+timeframes = [5, 15]
+atr_length = 14
+rearm_k = 1.0
+exclude_minutes = 30
+vwap_reference = "bar_close"
+output_dir = "artifacts/events"
+spotcheck_days = 20
+spotcheck_seed = 42
+spotcheck_dir = "artifacts/spotcheck"
+font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"

@@ -123,3 +123,75 @@ pub fn load_data_config(dir: &Path) -> Result<DataConfig, CoreError> {
     cfg.validate()?;
     Ok(cfg)
 }
+
+/// Reference VWAP used in the touch test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VwapReference {
+    /// VWAP at the close of the touch bar (default).
+    BarClose,
+    /// VWAP at the close of the previous bar, a level known before the bar starts.
+    PriorBarClose,
+}
+
+/// `config/events.toml`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EventsConfig {
+    pub timeframes: Vec<u32>,
+    pub atr_length: usize,
+    pub rearm_k: f64,
+    pub exclude_minutes: u32,
+    pub vwap_reference: VwapReference,
+    pub output_dir: String,
+    pub spotcheck_days: usize,
+    pub spotcheck_seed: u64,
+    pub spotcheck_dir: String,
+    pub font_path: String,
+}
+
+impl EventsConfig {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        if self.timeframes.iter().any(|w| ![5, 15].contains(w)) || self.timeframes.is_empty() {
+            return Err(CoreError::ConfigInvalid(
+                "timeframes must be a non empty subset of 5 and 15".into(),
+            ));
+        }
+        if self.atr_length < 2 || self.rearm_k < 0.0 {
+            return Err(CoreError::ConfigInvalid(
+                "atr_length must be at least 2 and rearm_k non negative".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn read_toml<T: serde::de::DeserializeOwned>(dir: &Path, name: &str) -> Result<T, CoreError> {
+    let path = dir.join(name);
+    let text = std::fs::read_to_string(&path).map_err(|source| CoreError::ConfigIo {
+        path: path.display().to_string(),
+        source,
+    })?;
+    toml::from_str(&text).map_err(|source| CoreError::ConfigParse {
+        path: path.display().to_string(),
+        source,
+    })
+}
+
+/// Reads and validates `<dir>/events.toml`.
+pub fn load_events_config(dir: &Path) -> Result<EventsConfig, CoreError> {
+    let cfg: EventsConfig = read_toml(dir, "events.toml")?;
+    cfg.validate()?;
+    Ok(cfg)
+}
+
+/// `config/validation.toml` (grown as later phases need more fields).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValidationConfig {
+    pub holdout_months: u32,
+}
+
+pub fn load_validation_config(dir: &Path) -> Result<ValidationConfig, CoreError> {
+    read_toml(dir, "validation.toml")
+}
