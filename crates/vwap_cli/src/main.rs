@@ -87,10 +87,8 @@ fn main() -> Result<()> {
                 let mut counts = [0usize; 3];
                 let mut by_year = std::collections::BTreeMap::new();
                 for l in &labeled {
-                    if let Some(c) = l.class {
-                        if let Some(x) = counts.get_mut(c.index()) {
-                            *x += 1;
-                        }
+                    if let Some(x) = l.class.and_then(|c| counts.get_mut(c.index())) {
+                        *x += 1;
                     }
                     let year = vwap_data::diag::utc(l.event.open_us)
                         .format("%Y")
