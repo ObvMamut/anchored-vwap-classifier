@@ -21,7 +21,9 @@ Three view types exist and only the first can be built by `vwap research run`: `
 A TOML file in `hypotheses/`, committed to git before it is run. Fields:
 
 * `id` (for example `H001`), `family` (approach, volume, levels, regime), `mechanism` (why the effect should exist, in words), `parent` (the card it refines, if any).
-* `outcome`: `rejection` (indicator of class REJECTION, using the primary label cell) or `net_ticks` (outcome in ticks minus round trip cost).
+* `outcome`: `rejection_given_resolved` (indicator of class REJECTION among events that hit a barrier; **the default for directional cards**), `rejection` (indicator of class REJECTION over all events, which also moves with the chop rate), or `net_ticks` (outcome in ticks minus round trip cost).
+
+  Why the amendment: the unconditional indicator equals $P(\text{resolved})\cdot P(\text{REJ}\mid\text{resolved})$. Cycle 0 showed that chop is predictable from the clock (`minutes_since_anchor` and `minute_of_day` carry most of the gain) while direction is not. A feature related only to chop, time of day above all, would therefore make a card on the plain indicator look significant. The conditional outcome removes that route. Amended on the owner's decision after cycle 0; the omnibus alpha already spent is unchanged.
 * `feature`: one of the registered feature names. `rule`: `top_tercile`, `bottom_tercile`, `above`, `below`, `flag`, or `groups` (a partition into named groups). `cut_points`: frozen numbers, or derived from discovery quantiles at run time and then written to the ledger. `direction`: the predicted sign of the contrast (subset minus complement).
 * `timeframes` (5 and 15), `min_effect`, `alpha` (its share of the budget).
 

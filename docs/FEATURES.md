@@ -178,3 +178,21 @@ Every row needs a passing proptest before Phase 4 closes.
 A global test also computes the full feature matrix on a series and on the same series with every bar after each event replaced, and asserts equality for all features at all events.
 
 Further engine level tests: the `CausalView` has no method that can return a bar after $t$ (checked by a compile fail test); statistics over a window never include the current session's future; rolling percentile references exclude the current session.
+
+## 9. Implemented feature set (research loop version)
+
+The research loop uses the 17 features below, built in `crates/vwap_features/src/features.rs` behind the `CausalView` of `crates/vwap_features/src/view.rs`. The names are the card field `feature`. Notation as in section 0. This set is smaller than the full design above, and chosen to cover the four hypothesis families.
+
+* `vslope_align` (regime): $s_t\,\frac{\mathrm{VWAP}_t - \mathrm{VWAP}_{t-L}}{L\,\sigma_t}$ with $L = \lceil 60 / w \rceil$ bars, `NaN` if $t-L$ is in an earlier session. Positive when the VWAP slopes in the approach direction. Inputs: VWAP at $t$ and $t-L$, $\sigma_t$.
+* `dist_travelled` (approach): $\max_{j \in \text{run}} d_j / \sigma_t$ over the current same side run, inputs at indices $\le t-1$ plus $\sigma_t$. `NaN` if the run is empty.
+* `bars_on_side` (approach): length of that run.
+* `speed` (approach): $\frac{d_{t-4} - d_{t-1}}{3\,\sigma_t}$, `NaN` if $t-4$ is in an earlier session.
+* `rel_volume` (volume): $v_t$ divided by the mean volume of the same New York clock slot over up to 20 earlier sessions, `NaN` with fewer than 10. Volume is the tick count.
+* `ordinal`, `raw_touches_before` (context): accepted events and raw touches earlier in the session.
+* `minute_of_day`, `minutes_since_anchor` (context): New York clock minute of the touch close, and minutes since the 18:00 anchor.
+* `vol_ratio` (regime): $10^4\,\sigma_t / C_t$.
+* `band_width` (context): $\sigma_{\mathrm{VWAP},t} / \sigma_t$.
+* `conf_flag`, `dist_pdh`, `dist_pdl`, `dist_pdc`, `dist_onh` (levels): $s_t(\ell - C_t)/\sigma_t$ for prior day high, low, close and overnight high, and `conf_flag` $= 1$ when any available level is within $0.5\,\sigma_t$. Prior day levels come from the finished regular session of the previous trading date; the overnight range is complete only after 09:30 New York and is `NaN` before.
+* `time_block` (timing): clock block of the touch close in New York time, 0 for 09:30 to 10:30, 1 for 10:30 to 14:00, 2 for 14:00 to 17:00, 3 otherwise (overnight).
+
+**Causal proof for the whole set.** Every feature is computed from a `CausalView`, whose accessors return `None` for any bar index above the touch bar $t$, and from finished earlier sessions and finished prior day levels. The property test `features_do_not_look_ahead` (`crates/vwap_features/tests/lookahead.rs`) replaces every 1 minute bar after a random cut and asserts that all 17 features of all events that closed before the cut are bit for bit unchanged, on both timeframes.

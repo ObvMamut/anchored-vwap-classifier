@@ -10,7 +10,7 @@ Conventions for anyone (human or agent) working in this repository. Read this fi
 4. Question: do features known at the touch predict the class better than base rates, with an edge that survives costs?
 5. Output: calibrated class probabilities. Trade only when $\hat P(\text{rejection}) > \tau$, otherwise abstain.
 
-Status: documentation phase. No Rust code exists yet and none is written until the owner says so.
+Status: Phases 1 to 3 are built (data, events, labels, controls). The research loop harness and a 17 feature library are built. Cycle 0 is done. Hypothesis cards run next. See `docs/DECISIONS.md` for results and `docs/PROTOCOL.md` for the loop rules.
 
 ## Hard rules
 

@@ -277,20 +277,18 @@ pub fn decompose(
         let d = prepare(&sub, task);
         let classes = if task == Task::Multi { 3 } else { 2 };
         let labels: Vec<f32> = d.y.iter().map(|&v| v as f32).collect();
-        if let Ok(ds) = Dataset::from_slice(&d.x, &labels, d.n_feat as i32, true) {
-            if let Ok(b) = Booster::train(ds, &params(cfg.seed, classes)) {
-                if let Ok(g) = b.feature_importance(lightgbm3::ImportanceType::Gain) {
-                    let tot: f64 = g.iter().sum::<f64>().max(1e-12);
-                    let mut named: Vec<(String, f64)> = feature_names()
-                        .iter()
-                        .zip(g)
-                        .map(|(n, v)| ((*n).to_string(), v / tot))
-                        .collect();
-                    named
-                        .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-                    importance.push((w, named));
-                }
-            }
+        if let Ok(ds) = Dataset::from_slice(&d.x, &labels, d.n_feat as i32, true)
+            && let Ok(b) = Booster::train(ds, &params(cfg.seed, classes))
+            && let Ok(g) = b.feature_importance(lightgbm3::ImportanceType::Gain)
+        {
+            let tot: f64 = g.iter().sum::<f64>().max(1e-12);
+            let mut named: Vec<(String, f64)> = feature_names()
+                .iter()
+                .zip(g)
+                .map(|(n, v)| ((*n).to_string(), v / tot))
+                .collect();
+            named.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            importance.push((w, named));
         }
     }
     Ok(Decomposition {

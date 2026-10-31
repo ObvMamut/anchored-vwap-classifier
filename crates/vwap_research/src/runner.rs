@@ -73,6 +73,10 @@ fn outcome_of(s: &Sample, o: Outcome, cost: f64) -> Option<f64> {
     }
     match o {
         Outcome::Rejection => s.class.map(|c| f64::from(u8::from(c == Class::Rejection))),
+        Outcome::RejectionGivenResolved => match s.class {
+            Some(Class::Chop) | None => None,
+            Some(c) => Some(f64::from(u8::from(c == Class::Rejection))),
+        },
         Outcome::NetTicks => Some(s.outcome_ticks - cost),
     }
 }
@@ -518,5 +522,69 @@ pub fn run_card(card: &Card, samples: &[Sample], cfg: &ResearchConfig) -> CardRe
         mde,
         verdict,
         reasons,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::selftest::{control_card, synthetic_samples};
+
+    fn cfg() -> ResearchConfig {
+        let mut c = vwap_core::load_research_config(std::path::Path::new("../../config")).unwrap();
+        c.bootstrap_draws = 800;
+        c
+    }
+
+    /// Samples where the top tercile of the feature changes only the chop rate.
+    fn chop_only(seed: u64) -> Vec<Sample> {
+        use rand::{Rng, SeedableRng};
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let mut out = synthetic_samples(0.0, 700, 5, seed);
+        for s in &mut out {
+            let x = s.features.first().copied().unwrap_or(0.0);
+            // top tercile events become chop far more often, direction stays 50/50
+            if x > 2.0 / 3.0 && rng.random::<f64>() < 0.5 {
+                s.class = Some(Class::Chop);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn chop_events_are_left_out_of_the_conditional_outcome() {
+        let mut s = synthetic_samples(0.0, 1, 1, 1).remove(0);
+        s.class = Some(Class::Chop);
+        assert_eq!(outcome_of(&s, Outcome::RejectionGivenResolved, 3.0), None);
+        assert_eq!(outcome_of(&s, Outcome::Rejection, 3.0), Some(0.0));
+        s.class = Some(Class::Rejection);
+        assert_eq!(
+            outcome_of(&s, Outcome::RejectionGivenResolved, 3.0),
+            Some(1.0)
+        );
+    }
+
+    #[test]
+    fn a_chop_only_effect_fools_the_plain_indicator_but_not_the_conditional_outcome() {
+        let c = cfg();
+        let samples = chop_only(5);
+        let mut card = control_card();
+        card.direction = crate::card::Direction::Negative;
+        card.outcome = Outcome::Rejection;
+        let plain = run_card(&card, &samples, &c);
+        assert!(plain.p < 0.01, "plain indicator p {}", plain.p);
+        card.outcome = Outcome::RejectionGivenResolved;
+        let cond = run_card(&card, &samples, &c);
+        assert!(cond.p > 0.01, "conditional p {}", cond.p);
+        assert_ne!(cond.verdict, Verdict::Promote);
+    }
+
+    #[test]
+    fn a_real_directional_effect_is_still_promoted_on_the_conditional_outcome() {
+        let c = cfg();
+        let mut card = control_card();
+        card.outcome = Outcome::RejectionGivenResolved;
+        let r = run_card(&card, &synthetic_samples(0.08, 800, 5, 21), &c);
+        assert_eq!(r.verdict, Verdict::Promote, "{:?} p {}", r.reasons, r.p);
     }
 }
