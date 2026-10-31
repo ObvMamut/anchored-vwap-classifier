@@ -1,0 +1,8 @@
+id = "H004"
+family = "regime"
+mechanism = "Liquidity and the mix of participants differ across the session: the regular session open, midday, the afternoon and the overnight session. Mean reversion toward the VWAP and rejection at it may differ by block, so the rejection rate among resolved events should not be equal across the four time blocks."
+outcome = "rejection_given_resolved"
+feature = "time_block"
+rule = "groups"
+direction = "any"
+timeframes = [5, 15]
