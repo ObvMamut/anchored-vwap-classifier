@@ -1,97 +1,21 @@
 //! Lookahead, symmetry and invariant properties of the triple barrier labels.
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
-use chrono::NaiveDate;
 use proptest::prelude::*;
 use vwap_core::{Class, DataConfig};
-use vwap_data::{RawBars, clean::clean, time::utc_of_local};
 use vwap_events::{build, detect, event_params};
 use vwap_labels::{LabelParams, label_events};
 
 fn data_cfg() -> DataConfig {
-    toml::from_str(
-        r#"
-input_path = "x"
-output_dir = "x"
-artifact_dir = "x"
-timestamp_kind = "utc"
-server_offset_hours = 7
-bar_label = "open"
-session_anchor = "globex"
-weight_column = "tick_volume"
-price_grid = 0.1
-drop_invalid_bars = true
-roll_offset_days = 8
-roll_buffer_sessions = 1
-roll_confirm_percentile = 0.99
-roll_search_window_days = 21
-max_gap_minutes_ok = 2
-max_gap_minutes_event = 5
-outlier_z = 12.0
-outlier_window_bars = 100
-max_range_median_multiple = 40.0
-min_bars_fraction = 0.9
-early_close_time = "13:15"
-flat_time_globex = "16:55"
-flat_time_rth = "16:00"
-"#,
-    )
-    .unwrap()
+    vwap_testkit::data_config()
 }
 
 fn events_cfg() -> vwap_core::EventsConfig {
-    toml::from_str(
-        r#"
-timeframes = [5, 15]
-atr_length = 14
-rearm_k = 0.5
-exclude_minutes = 30
-vwap_reference = "bar_close"
-output_dir = "x"
-spotcheck_days = 1
-spotcheck_seed = 1
-spotcheck_dir = "x"
-font_path = "x"
-"#,
-    )
-    .unwrap()
+    vwap_testkit::events_config(0.5, 30)
 }
 
 fn session_bars(steps: &[i32]) -> vwap_data::CleanBars {
-    let d0 = NaiveDate::from_ymd_opt(2024, 1, 16).unwrap();
-    let (mut m, mut day) = (1080u32, d0);
-    let mut ts = Vec::new();
-    for _ in 0..steps.len() {
-        ts.push(utc_of_local(day, m).unwrap());
-        m += 1;
-        if m == 1440 {
-            m = 0;
-            day = day.succ_opt().unwrap();
-        }
-    }
-    let mut price = 18000.0f64;
-    let (mut o, mut h, mut l, mut c) = (vec![], vec![], vec![], vec![]);
-    for s in steps {
-        let open = price;
-        price = (price + f64::from(*s) * 0.1).max(1000.0);
-        let close = (price * 10.0).round() / 10.0;
-        o.push(open);
-        c.push(close);
-        h.push(open.max(close) + 0.2);
-        l.push(open.min(close) - 0.2);
-    }
-    let n = steps.len();
-    let raw = RawBars {
-        ts_us: ts,
-        open: o,
-        high: h,
-        low: l,
-        close: c,
-        volume: vec![0.0; n],
-        tick_volume: vec![10.0; n],
-        source_dtype: "test".into(),
-    };
-    clean(&raw, &data_cfg()).unwrap().0
+    vwap_testkit::session_bars(steps, &vec![9u8; steps.len()])
 }
 
 proptest! {

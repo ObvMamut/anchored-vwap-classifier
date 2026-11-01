@@ -5,6 +5,7 @@
 )]
 
 pub mod error;
+pub mod plots;
 pub mod spotcheck;
 
 pub use error::ReportError;

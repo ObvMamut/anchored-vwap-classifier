@@ -14,4 +14,11 @@ pub enum CoreError {
     },
     #[error("invalid config: {0}")]
     ConfigInvalid(String),
+    #[error("io error on {path}: {source}")]
+    Io {
+        path: String,
+        source: std::io::Error,
+    },
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
 }

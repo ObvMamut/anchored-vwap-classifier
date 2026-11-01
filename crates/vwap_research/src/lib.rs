@@ -10,12 +10,12 @@ pub mod cycle;
 pub mod data;
 pub mod error;
 pub mod ledger;
-pub mod math;
 pub mod omnibus;
 pub mod report;
 pub mod runner;
 pub mod selftest;
 pub mod split;
+pub mod strategy;
 
 pub use card::{Card, Outcome, RuleKind};
 pub use error::ResearchError;
@@ -24,3 +24,4 @@ pub use runner::{CardResult, WidthResult, run_card};
 pub use split::{
     Bounds, ConfirmPermit, ConfirmView, DiscoveryView, HoldoutPermit, HoldoutView, Sample,
 };
+pub use vwap_validation::math;

@@ -1,5 +1,7 @@
 # Features
 
+> **Status.** 34 feature columns are implemented and listed in section 9: the 18 of the research loop, nine calendar columns (K1 to K3 for three release types) and seven appended designed columns. The rest of this document is the original design. Not built: A1 and A2 for several lookbacks, V2, V3, V4, C3 as a one hot, C7 and C8 as separate columns, opening range levels, R1 and R2.
+
 Owner crate: `vwap_features`. Config: `config/features.toml`. Symbols: `GLOSSARY.md`.
 
 Every feature is a function of the `CausalView` at the touch bar $t$. The view exposes 1 minute bars and coarse bars with close time at or before the close of bar $t$, the session state built from them, and nothing else. A feature is computed once per event and stored as `f64`; undefined values are `NaN`.
@@ -136,15 +138,19 @@ Causal proof: $O_{09:30}$ is the open of the first RTH 1 minute bar, which has p
 
 ## 6. Optional calendar flags (CPI, FOMC, NFP)
 
-Config `calendar.enabled = false` by default. The source is a frozen snapshot `data/external/calendar/events.csv` produced by `vwap calendar fetch` (schema: date, UTC release time, event type, source URL, retrieval time). The fetch stage downloads official release schedules (BLS for CPI and the Employment Situation, the Federal Reserve for FOMC) once, validates the snapshot (12 CPI, 12 NFP and about 8 FOMC dates per year; release times 08:30 New York for CPI and NFP and 14:00 for FOMC statements, subject to the schedule), records a SHA256 hash, and fails closed if a host is unreachable or a parse check fails. No other stage touches the network. Features then use only the snapshot.
+`config/features.toml` has `calendar_enabled = false` by default, and while it is false the nine calendar columns are `NaN`. The source is a frozen snapshot in `research/calendar/` (tracked by git): `events.csv` (columns `kind`, `date`, `utc_us`, `source`) and `lock.json` (retrieval time, the SHA256 of every page, the SHA256 of the CSV, the counts per year). It is produced by `vwap calendar fetch config`, which downloads the official release schedules once (the BLS schedule pages for CPI and the Employment Situation, the Federal Reserve meeting calendars for FOMC), reads the visible text of each page, validates the result against `config/calendar.toml` and writes the snapshot, or fails closed and writes nothing. `vwap calendar import file.csv config` freezes a hand supplied CSV of `kind,date` rows with the same validation, for a machine that cannot reach the sites. A snapshot whose CSV no longer matches its hash is refused by every reader, and `vwap doctor` checks it when the features are on.
+
+Validation (`calendar.toml`): each year of the range holds 11 to 12 CPI and Employment Situation releases (2025 lost a CPI release and delayed a jobs report in the federal shutdown) and 6 to 9 FOMC meetings, no kind and date appears twice, and the release instant is the configured New York time, 08:30 for CPI and NFP and 14:00 for the FOMC statement, converted to UTC with the daylight saving rules of that day. No other stage touches the network.
+
+**Limits of what was verified.** The page addresses and the page layouts could not be checked from the development environment, where the two hosts do not resolve. The parsers were written against the text patterns of these pages and tested on fixtures that follow them. If a host moved or a page changed, the fetch fails with the reason (the counts per year that were found) and the addresses in `calendar.toml` are the place to fix. Nothing was recorded from a live fetch, so `calendar_enabled` stays false in this repository until the owner commits a snapshot.
 
 For each type $e \in \{\text{CPI}, \text{FOMC}, \text{NFP}\}$:
 
-* **K1 release day flag**: $\mathbf 1[\text{release of type } e \text{ on trading date } d]$.
-* **K2 minutes until the next scheduled release** of type $e$, capped at 1440.
-* **K3 minutes since the last release** of type $e$, capped at 1440.
+* **K1 release day flag**, column `cal_<e>_day`: $\mathbf 1[\text{a release of type } e \text{ falls inside the Globex session of the touch}]$.
+* **K2 minutes until the next scheduled release** of type $e$ after the touch close, column `cal_<e>_until`, capped at `calendar_cap_minutes` (1440).
+* **K3 minutes since the last release** of type $e$ at or before the touch close, column `cal_<e>_since`, capped at 1440. A close exactly at the release gives 0.
 
-Causal proof: the scheduled release time of an event is published in advance by the source. The features use schedule times and the current clock only, never the release outcome. The snapshot stores the date as originally scheduled.
+Causal proof: the scheduled release time of an event is published in advance by the source. The features use schedule times, the close time and the session of the touch bar, never a price and never the release outcome. The snapshot stores the date as originally scheduled.
 
 ## 7. Missing values and scaling
 
@@ -179,9 +185,11 @@ A global test also computes the full feature matrix on a series and on the same 
 
 Further engine level tests: the `CausalView` has no method that can return a bar after $t$ (checked by a compile fail test); statistics over a window never include the current session's future; rolling percentile references exclude the current session.
 
-## 9. Implemented feature set (research loop version)
+## 9. Implemented feature set
 
-The research loop uses the 17 features below, built in `crates/vwap_features/src/features.rs` behind the `CausalView` of `crates/vwap_features/src/view.rs`. The names are the card field `feature`. Notation as in section 0. This set is smaller than the full design above, and chosen to cover the four hypothesis families.
+The 34 columns below are built in `crates/vwap_features/src/features.rs` behind the `CausalView` of `crates/vwap_features/src/view.rs`, in this order. The names are the card field `feature`. The column order is part of the golden fingerprints: new columns are appended, never inserted. Notation as in section 0.
+
+**The 18 original columns** (the research loop of `PROTOCOL.md` used these):
 
 * `vslope_align` (regime): $s_t\,\frac{\mathrm{VWAP}_t - \mathrm{VWAP}_{t-L}}{L\,\sigma_t}$ with $L = \lceil 60 / w \rceil$ bars, `NaN` if $t-L$ is in an earlier session. Positive when the VWAP slopes in the approach direction. Inputs: VWAP at $t$ and $t-L$, $\sigma_t$.
 * `dist_travelled` (approach): $\max_{j \in \text{run}} d_j / \sigma_t$ over the current same side run, inputs at indices $\le t-1$ plus $\sigma_t$. `NaN` if the run is empty.
@@ -194,5 +202,19 @@ The research loop uses the 17 features below, built in `crates/vwap_features/src
 * `band_width` (context): $\sigma_{\mathrm{VWAP},t} / \sigma_t$.
 * `conf_flag`, `dist_pdh`, `dist_pdl`, `dist_pdc`, `dist_onh` (levels): $s_t(\ell - C_t)/\sigma_t$ for prior day high, low, close and overnight high, and `conf_flag` $= 1$ when any available level is within $0.5\,\sigma_t$. Prior day levels come from the finished regular session of the previous trading date; the overnight range is complete only after 09:30 New York and is `NaN` before.
 * `time_block` (timing): clock block of the touch close in New York time, 0 for 09:30 to 10:30, 1 for 10:30 to 14:00, 2 for 14:00 to 17:00, 3 otherwise (overnight).
+* `conf_count` (levels): how many of the five levels lie within $0.5\,\sigma_t$ of the touch close.
 
-**Causal proof for the whole set.** Every feature is computed from a `CausalView`, whose accessors return `None` for any bar index above the touch bar $t$, and from finished earlier sessions and finished prior day levels. The property test `features_do_not_look_ahead` (`crates/vwap_features/tests/lookahead.rs`) replaces every 1 minute bar after a random cut and asserts that all 17 features of all events that closed before the cut are bit for bit unchanged, on both timeframes.
+**Nine calendar columns** (section 6): `cal_cpi_day`, `cal_cpi_until`, `cal_cpi_since`, `cal_fomc_day`, `cal_fomc_until`, `cal_fomc_since`, `cal_nfp_day`, `cal_nfp_until`, `cal_nfp_since`. `NaN` while the calendar is off.
+
+**Seven appended columns:**
+
+* `close_location` (A5): $\frac{C_t - L_t}{H_t - L_t}$ in $[0, 1]$, `NaN` for a bar without range. Bar $t$ only, known at its close; the label starts at $t+1$.
+* `bar_range` (A5): $\frac{H_t - L_t}{\sigma_t}$.
+* `tod_sin`, `tod_cos` (C2): $\sin(2\pi\theta_t / 1440)$ and $\cos(2\pi\theta_t / 1440)$ with $\theta_t$ the New York clock minute of the touch close. Clock only.
+* `weekday` (C3): $(\text{trading date in days since the epoch} + 3) \bmod 7$, Monday is 0. Calendar only. A Globex session that opens on Sunday evening belongs to Monday.
+* `dist_onl` (levels): the overnight low in the same form as `dist_onh`.
+* `band_pos_max` (C6): $\max_{j \in \text{run}} d_j / \sigma_{\mathrm{VWAP},j}$ over the current run, using only $\sigma_{\mathrm{VWAP},j} > 0$. Inputs at indices $\le t-1$.
+
+**Causal proof for the whole set.** Every feature is computed from a `CausalView`, whose accessors return `None` for any bar index above the touch bar $t$, from the touch event (known at the close of its bar), from finished earlier sessions and finished prior day levels, and from the published schedule of the calendar table. The property test `features_do_not_look_ahead` (`crates/vwap_features/tests/lookahead.rs`) replaces every 1 minute bar after a random cut and asserts that all 34 features of all events that closed before the cut are bit for bit unchanged, on both timeframes, with a calendar table that has releases inside the series. Three golden fingerprints pin the values on a fixed synthetic series: the 18 original columns (unchanged since the research loop, so nothing in the recorded results moved), the nine calendar columns, and the seven appended columns. A fingerprint is changed only deliberately, with the reason in the commit message.
+
+**Flaw found in the protocol.** The card outcome `rejection` is the indicator of the REJECTION class, which equals $(1 - P_{\text{chop}})\,P(\text{rej} \mid \text{resolved})$. Any feature related to chop, above all time of day, would make a card on `rejection` look significant through chop alone. The directional hypothesis needs the outcome conditional on resolution. Changing the outcome definition is a protocol change and needs the owner's decision.

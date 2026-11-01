@@ -1,0 +1,9 @@
+# Fills, costs and the position policy of the backtest (`docs/BACKTEST.md`).
+# Defaults: 1 tick of adverse slippage per side and 2.00 USD commission per side,
+# about 2.8 ticks round trip.
+slippage_ticks = 1.0
+commission_usd = 2.0
+position_policy = "one_at_a_time"
+sweep_slippage = [0.0, 1.0, 2.0, 3.0]
+sweep_commission = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+trading_days_per_year = 252.0

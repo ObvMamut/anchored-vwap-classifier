@@ -7,7 +7,6 @@ use std::path::Path;
 
 use chrono::{DateTime, Datelike};
 use polars::prelude::*;
-use sha2::{Digest, Sha256};
 
 use crate::clean::CleanBars;
 use crate::error::DataError;
@@ -19,11 +18,30 @@ fn io_err(path: &Path) -> impl Fn(std::io::Error) -> DataError + '_ {
     }
 }
 
-pub fn sha256_file(path: &Path) -> Result<String, DataError> {
-    let bytes = fs::read(path).map_err(io_err(path))?;
-    let mut h = Sha256::new();
-    h.update(&bytes);
-    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+pub use vwap_core::manifest::sha256_file;
+
+/// A fingerprint of the cleaned data: the hash of every yearly partition file, in year order.
+/// Downstream stages compare it with the value recorded by `data clean`.
+pub fn fingerprint(dir: &Path) -> Result<String, DataError> {
+    let mut years: Vec<std::path::PathBuf> = fs::read_dir(dir)
+        .map_err(io_err(dir))?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.join("part0.parquet").exists())
+        .collect();
+    years.sort();
+    let mut listing = String::new();
+    for y in years {
+        let name = y
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        listing.push_str(&format!(
+            "{name}:{}\n",
+            sha256_file(&y.join("part0.parquet"))?
+        ));
+    }
+    Ok(vwap_core::manifest::sha256_bytes(listing.as_bytes()))
 }
 
 fn frame(b: &CleanBars, range: std::ops::Range<usize>) -> Result<DataFrame, DataError> {

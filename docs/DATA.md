@@ -15,6 +15,8 @@ Facts given by the owner, and what the data actually showed (details in `DECISIO
 3. Stated: a raw front month series rolled by a calendar rule. Measured: not back adjusted, but no roll steps are visible, so it behaves like a continuous vendor series. Prices are on a 0.1 grid (config `price_grid`), not the 0.25 NQ grid.
 4. Stated: VWAP weight is `Volume`. Measured: `Volume` is zero on every row. The weight is `TickVolume` (config `weight_column = "tick_volume"`).
 
+The SHA256 of the file is pinned in `config/data.toml` (`input_sha256`); `data clean` refuses a different file, so every recorded result stays tied to one dataset.
+
 Loader requirements, each a hard error if violated:
 
 * Timestamps are strictly increasing after de duplication, normalised to `Datetime(Microseconds, "UTC")`. A naive datetime column is interpreted as UTC. A timezone aware column is converted to UTC.

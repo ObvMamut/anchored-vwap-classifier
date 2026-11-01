@@ -1,4 +1,4 @@
-//! Phase 1 spikes: confirm what the model libraries can do before relying on them.
+//! Library behaviour tests: what the model libraries do, so an upgrade that changes it is noticed.
 //!
 //! Finding recorded in docs/DECISIONS.md: `lightgbm3` 1.0.11 sizes the
 //! `predict_contrib` output buffer as `n_rows * (n_features + 1)`, which is too

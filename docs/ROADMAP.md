@@ -1,12 +1,12 @@
 # Roadmap
 
-**Outcome:** the research loop ran on the discovery segment (omnibus, 7 hypothesis cards, 8 counted trials) and gate 3b was not passed: nothing was promoted, so confirmation, the cost aware backtest and the holdout run were not started. See `DECISIONS.md`, section 14.
+**Outcome:** the research loop ran on the discovery segment (omnibus, 7 hypothesis cards, 8 counted trials) and gate 3b was not passed: nothing was promoted, so confirmation and the holdout run were not started. See `DECISIONS.md`, section 14. The stages of phases 4 to 7 were later built as reusable tooling (section 16 of the same file) and run on three baseline strategies in both timeframes, 14 counted trials in all: none made a trade, none was promoted.
 
 Status: Phases 1 and 2 are done. Phase 3 as first specified ran and its marginal gate failed (see `DECISIONS.md`, section 5). The owner approved a redesign: gate 3 is now two tiers (3a equivalence verdict, 3b conditional screen) and the later phases run as a closed research loop under `PROTOCOL.md`, with a three way data split (discovery, confirmation, holdout).
 
 Seven phases. Each has deliverables, tests, an exit criterion and a go or no go decision. A gate failure stops the project at that phase and produces a written report. Phases do not overlap: a phase starts only after the previous gate decision is recorded in `DECISIONS.md`.
 
-No Rust code exists yet. Code starts only when the owner says so.
+The workspace and its crates are described in `ARCHITECTURE.md`; this file keeps the plan and its gates as they were decided.
 
 ## Phase 1: Data pipeline plus tests
 
@@ -52,7 +52,7 @@ Exit criteria: the primary label cell was committed to config before this phase 
 
 ## Phase 4: Features plus lookahead tests
 
-Crate: `vwap_features`. Also the `vwap calendar fetch` stage.
+Crate: `vwap_features`. Also the `vwap calendar fetch` stage (built as `vwap_calendar`, not verified against the live sites, features off).
 
 Deliverables: all features in `FEATURES.md`, feature matrix, NaN report, frozen calendar snapshot (if reachable) or calendar features OFF.
 
@@ -61,6 +61,8 @@ Tests: a named lookahead proptest for every feature plus the global replacement 
 Exit criteria: lookahead matrix fully green; NaN rates understood; calendar snapshot validated or the feature switched off with a note; verify that the network policy of the environment allows the official hosts before relying on the fetch.
 
 **Go or no go**: go when every feature has a passing proof and test. No go for any feature without one: it is removed, not waived.
+
+> **Phases 5 to 7 below** were first replaced by the research loop (Phase R). They were later built as tooling driven by strategy cards (`PROTOCOL.md`, section 12, and `DECISIONS.md`, section 16): purged walk forward in `vwap_validation`, models, calibration, TreeSHAP in `vwap_model`, the cost aware backtest in `vwap_backtest`, the single confirmation and the single holdout run for strategies. The gates below are applied as described in `MODELING.md` and `BACKTEST.md`, section 9. The holdout was never run, because no strategy passed.
 
 ## Phase 5: Logistic regression and LightGBM under walk forward validation. GATE
 

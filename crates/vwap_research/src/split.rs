@@ -1,27 +1,10 @@
 //! The three data segments. Each segment is a distinct type, and only the discovery
 //! view can be built without a permit.
 
-use vwap_core::{Class, ResearchConfig};
+use vwap_core::ResearchConfig;
 
 use crate::error::ResearchError;
-
-/// One event with its label, features and the fields the statistics need.
-#[derive(Debug, Clone)]
-pub struct Sample {
-    pub width: u32,
-    pub event_id: u32,
-    pub session: i32,
-    pub year: i32,
-    pub t_close_us: i64,
-    pub t_end_us: i64,
-    pub side: i8,
-    pub class: Option<Class>,
-    pub ambiguous: bool,
-    pub outcome_ticks: f64,
-    pub sigma_over_price: f64,
-    /// Aligned with `vwap_features::feature_names()`.
-    pub features: Vec<f64>,
-}
+pub use vwap_dataset::Sample;
 
 /// Segment boundaries in UTC microseconds.
 #[derive(Debug, Clone, Copy)]
@@ -154,6 +137,7 @@ mod tests {
             outcome_ticks: 0.0,
             sigma_over_price: 0.0,
             features: vec![],
+            ..Sample::default()
         }
     }
 

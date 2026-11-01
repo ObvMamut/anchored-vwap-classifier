@@ -50,6 +50,7 @@ pub fn synthetic_samples(
                     outcome_ticks: 0.0,
                     sigma_over_price: rng.random::<f64>() * 0.01,
                     features,
+                    ..Sample::default()
                 });
             }
         }
@@ -80,7 +81,7 @@ pub fn selftest(cfg: &ResearchConfig) -> Result<(), ResearchError> {
     let mut c = cfg.clone();
     c.bootstrap_draws = c.bootstrap_draws.clamp(300, 2000);
     // positive control: a planted effect of 8 points is promoted
-    let planted = synthetic_samples(0.08, 800, 5, 11);
+    let planted = synthetic_samples(cfg.selftest_planted_effect, 800, 5, 11);
     let r = run_card(&card, &planted, &c);
     if r.verdict != Verdict::Promote {
         return Err(ResearchError::SelfTest(format!(
@@ -91,19 +92,19 @@ pub fn selftest(cfg: &ResearchConfig) -> Result<(), ResearchError> {
     // negative control: no effect, many seeds; promotions must be (almost) absent and the
     // raw one sided rate must be close to the nominal level
     let (mut promotes, mut raw_rejects) = (0, 0);
-    let trials = 60;
+    let trials = cfg.selftest_null_trials;
     for seed in 0..trials {
-        let null = synthetic_samples(0.0, 300, 5, 1000 + seed);
+        let null = synthetic_samples(0.0, 300, 5, 1000 + seed as u64);
         let r = run_card(&card, &null, &c);
         promotes += usize::from(r.verdict == Verdict::Promote);
         raw_rejects += usize::from(r.p <= 0.05);
     }
-    if promotes > 1 {
+    if promotes > cfg.selftest_max_null_promotes {
         return Err(ResearchError::SelfTest(format!(
             "{promotes} of {trials} null runs were promoted"
         )));
     }
-    if raw_rejects > 10 {
+    if raw_rejects > cfg.selftest_max_null_raw_rejects {
         return Err(ResearchError::SelfTest(format!(
             "{raw_rejects} of {trials} null runs had p at or below 0.05, expected about 3"
         )));
@@ -156,6 +157,7 @@ mod tests {
                             outcome_ticks: 0.0,
                             sigma_over_price: 0.005,
                             features,
+                            ..Sample::default()
                         });
                     }
                 }

@@ -3260,6 +3260,7 @@ version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
+ "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -4047,6 +4048,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
 
 [[package]]
+name = "ureq"
+version = "2.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02d1a66277ed75f640d608235660df48c8e3c19f3b4edb6a263315626cc3c01d"
+dependencies = [
+ "base64 0.22.1",
+ "log",
+ "once_cell",
+ "rustls",
+ "rustls-pki-types",
+ "url",
+ "webpki-roots 0.26.11",
+]
+
+[[package]]
 name = "url"
 version = "2.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4116,6 +4132,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
 
 [[package]]
+name = "vwap_backtest"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "rand 0.9.5",
+ "rand_chacha 0.9.0",
+ "serde",
+ "vwap_core",
+ "vwap_data",
+ "vwap_events",
+ "vwap_labels",
+ "vwap_validation",
+]
+
+[[package]]
 name = "vwap_baselines"
 version = "0.1.0"
 dependencies = [
@@ -4133,16 +4164,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "vwap_calendar"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror",
+ "ureq",
+ "vwap_core",
+ "vwap_data",
+]
+
+[[package]]
 name = "vwap_cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
+ "polars",
  "serde_json",
+ "toml",
  "vwap_baselines",
+ "vwap_calendar",
  "vwap_core",
  "vwap_data",
+ "vwap_dataset",
  "vwap_events",
+ "vwap_features",
  "vwap_labels",
  "vwap_report",
  "vwap_research",
@@ -4155,6 +4207,8 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "serde",
+ "serde_json",
+ "sha2 0.10.9",
  "thiserror",
  "toml",
 ]
@@ -4176,6 +4230,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "vwap_dataset"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "polars",
+ "thiserror",
+ "vwap_core",
+ "vwap_data",
+ "vwap_events",
+ "vwap_features",
+ "vwap_labels",
+]
+
+[[package]]
 name = "vwap_events"
 version = "0.1.0"
 dependencies = [
@@ -4188,6 +4256,7 @@ dependencies = [
  "toml",
  "vwap_core",
  "vwap_data",
+ "vwap_testkit",
 ]
 
 [[package]]
@@ -4196,26 +4265,25 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "proptest",
- "toml",
  "vwap_core",
  "vwap_data",
  "vwap_events",
+ "vwap_testkit",
 ]
 
 [[package]]
 name = "vwap_labels"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "polars",
  "proptest",
  "serde",
  "serde_json",
  "thiserror",
- "toml",
  "vwap_core",
  "vwap_data",
  "vwap_events",
+ "vwap_testkit",
 ]
 
 [[package]]
@@ -4226,9 +4294,13 @@ dependencies = [
  "linfa",
  "linfa-logistic",
  "ndarray",
+ "proptest",
+ "rand 0.9.5",
+ "rand_chacha 0.9.0",
  "serde_json",
  "thiserror",
  "vwap_core",
+ "vwap_validation",
 ]
 
 [[package]]
@@ -4252,6 +4324,9 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "lightgbm3",
+ "linfa",
+ "linfa-logistic",
+ "ndarray",
  "proptest",
  "rand 0.9.5",
  "rand_chacha 0.9.0",
@@ -4261,12 +4336,37 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror",
  "toml",
+ "vwap_backtest",
  "vwap_baselines",
  "vwap_core",
  "vwap_data",
+ "vwap_dataset",
  "vwap_events",
  "vwap_features",
  "vwap_labels",
+ "vwap_model",
+ "vwap_validation",
+]
+
+[[package]]
+name = "vwap_testkit"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "toml",
+ "vwap_core",
+ "vwap_data",
+]
+
+[[package]]
+name = "vwap_validation"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "proptest",
+ "rand 0.9.5",
+ "rand_chacha 0.9.0",
+ "thiserror",
 ]
 
 [[package]]
@@ -4398,6 +4498,24 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
+dependencies = [
+ "webpki-roots 1.0.11",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5f280bbb2b287bc8e7de7e3852945a0ff50d1bbcb5ed42b6c7a568c546df171"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]

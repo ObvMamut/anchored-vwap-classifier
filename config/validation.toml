@@ -1,1 +1,16 @@
-holdout_months = 24
+# Walk forward geometry and gate limits of the strategy stages (`docs/VALIDATION.md`).
+# No split dates here: the segment boundaries are defined once, in research.toml.
+train_months = 24
+test_months = 6
+step_months = 6
+mode = "rolling"
+embargo_horizons = 1.0
+inner_blocks = 5
+pbo_blocks = 16
+pbo_min_trials = 4
+dsr_min = 0.95
+pbo_max = 0.2
+max_ece = 0.05
+min_fold_fraction = 0.6
+bootstrap_draws = 1000
+interval_level = 0.95

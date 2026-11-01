@@ -1,0 +1,6 @@
+# The generated report and its plots. The directory is ignored by git: the tracked audit trail
+# is research/ledger.jsonl, research/reports and research/strategies.
+output_dir = "reports"
+plot_width = 1100
+plot_height = 700
+top_features = 12

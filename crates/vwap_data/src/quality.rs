@@ -13,9 +13,6 @@ use crate::clean::{CleanBars, flag};
 use crate::error::DataError;
 use crate::time::{MINUTE_US, epoch_days};
 
-/// Expected bars in a normal Globex session (23 hours, 18:00 to 17:00).
-const NORMAL_SESSION_BARS: f64 = 1380.0;
-
 #[derive(Debug, Default, Serialize)]
 pub struct GapReport {
     pub minor_gaps_2_to_ok: usize,
@@ -266,7 +263,7 @@ pub fn analyze(b: &mut CleanBars, cfg: &DataConfig) -> Result<QualityReport, Dat
             .bars_histogram
             .entry(bucket.into())
             .or_default() += 1;
-        let thin = (count as f64) < cfg.min_bars_fraction * NORMAL_SESSION_BARS;
+        let thin = (count as f64) < cfg.min_bars_fraction * cfg.expected_session_bars;
         let early = last_min < flat_min && last_min >= 600;
         for f in &mut b.flags[first..=last] {
             if thin {

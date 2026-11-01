@@ -1,0 +1,5 @@
+id = "S002"
+kind = "strategy"
+mechanism = "multinomial logistic regression on all features with an L2 penalty chosen by inner folds, isotonic or Platt calibration, rejection traded above a threshold tuned on out of fold probabilities"
+model = "logistic"
+timeframes = [5, 15]

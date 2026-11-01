@@ -3,9 +3,6 @@
 
 use vwap_data::CleanBars;
 
-const RTH_OPEN: u16 = 570; // 09:30
-const RTH_CLOSE: u16 = 960; // 16:00
-
 /// Levels of one regular trading hours date.
 #[derive(Debug, Clone, Copy)]
 pub struct DayLevels {
@@ -35,13 +32,14 @@ pub struct EventLevels {
 }
 
 impl LevelTable {
-    pub fn build(b: &CleanBars) -> Self {
+    /// Regular hours come from `cfg` (09:30 to 16:00 New York by default).
+    pub fn build(b: &CleanBars, cfg: &vwap_core::FeaturesConfig) -> Self {
         let mut days: Vec<DayLevels> = Vec::new();
         let (mut on_h, mut on_l) = (f64::NAN, f64::NAN);
         let mut cur: Option<DayLevels> = None;
         for k in 0..b.len() {
             let m = b.ny_minute[k];
-            if (RTH_OPEN..RTH_CLOSE).contains(&m) {
+            if (cfg.rth_open_minute..cfg.rth_close_minute).contains(&m) {
                 let date = b.ny_date[k];
                 match cur.as_mut() {
                     Some(d) if d.date == date => {

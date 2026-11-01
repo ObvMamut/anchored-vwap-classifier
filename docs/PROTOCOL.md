@@ -50,11 +50,11 @@ Let $\Delta = \hat\pi_{\mathrm{REJ}}(\text{subset}) - \hat\pi_{\mathrm{REJ}}(\te
 * **REFINE** if $\alpha_{\text{card}} < p < 0.25$ with the predicted sign on both timeframes. One refinement per mechanism, filed as a new card with `parent` set and its own alpha share. A refinement may change cut points or the subset rule, never the outcome or the data.
 * **DROP** otherwise.
 
-Confirmation tests each promoted card once on the `ConfirmView` at one sided $\alpha = 0.05$, Holm adjusted over the promoted cards, with the same direction and cut points. A confirmed card must also have a positive cost adjusted expectancy, from the backtest of `BACKTEST.md`, to count.
+Confirmation (`vwap research confirm`) tests each promoted card once on the `ConfirmView` at a one sided $\alpha = 0.05 / k$ with $k$ the number of promoted cards (a Bonferroni share, the conservative form of a Holm adjustment), with the predicted direction, enough events in each arm and **the cut points frozen on discovery**, never recomputed on the confirmation data. The cost adjusted expectancy requirement of `BACKTEST.md` is not enforced for hypothesis cards; strategy cards (section 12) carry the backtest. The single holdout run (`vwap holdout run`) needs `research/FREEZE.toml` naming a confirmed card, a clean git tree and an unused lock file, and applies the same decision rule at $\alpha = 0.05$.
 
 ## 7. The fixed analysis report
 
-Each run writes `reports/research/<id>.md` and appends one ledger line. The report states, for each timeframe: arm sizes, $\hat\pi$ in each arm, $\Delta$, simultaneous 95 percent session clustered interval, $p$, the minimum detectable effect, and the sign by discovery year. It also gives the contrast by volatility tercile and by side, the same contrast on the control levels of `BASELINES.md` (difference in differences, as a diagnostic of VWAP specificity, not a promotion condition), the missing value rate of the feature, and a cost adjusted expectancy proxy.
+Each run writes `research/reports/<id>.md` and appends one ledger line. The report states, for each timeframe: arm sizes, $\hat\pi$ in each arm, $\Delta$, simultaneous 95 percent session clustered interval, $p$, the minimum detectable effect, and the sign by discovery year. It also gives the contrast by volatility tercile and by side, the same contrast on the control levels of `BASELINES.md` (difference in differences, as a diagnostic of VWAP specificity, not a promotion condition), the missing value rate of the feature, and a cost adjusted expectancy proxy.
 
 Minimum detectable effect, with session clustering variance inflation $\mathrm{deff}$ taken from the bootstrap:
 
@@ -68,7 +68,7 @@ Before targeted cards, one test asks whether there is any predictive structure a
 
 $$ S = \mathrm{LL}_{\text{majority}} - \mathrm{LL}_{\text{model}} $$
 
-The null distribution comes from `omnibus_permutations` (1000) circular shifts of the time ordered label sequence by a seeded offset, which keep the label dependence structure and break its alignment with the features. (The first draft of this document said within session shuffles. That was corrected before any real run, because a within session shuffle preserves between session associations such as volatility regime and class mix, so it is not a valid null for regime features.) $p = \frac{1 + \#\{S^{*} \ge S\}}{1 + B}$, tested at $\alpha_{\mathrm{omni}} = 0.01$. Permutation importance explains a positive result. Multiclass TreeSHAP is deferred (see `DECISIONS.md`, section 7).
+The null distribution comes from `omnibus_permutations` (1000) circular shifts of the time ordered label sequence by a seeded offset, which keep the label dependence structure and break its alignment with the features. (The first draft of this document said within session shuffles. That was corrected before any real run, because a within session shuffle preserves between session associations such as volatility regime and class mix, so it is not a valid null for regime features.) $p = \frac{1 + \#\{S^{*} \ge S\}}{1 + B}$, tested at $\alpha_{\mathrm{omni}} = 0.01$. Permutation importance explains a positive result. Multiclass TreeSHAP is available for strategy cards (`MODELING.md`, section 9).
 
 ## 9. Stop rules and checkpoints
 
@@ -76,4 +76,24 @@ The loop stops when the budget is spent, or after two consecutive nulls followin
 
 ## 10. Ledger
 
-`artifacts/research/ledger.jsonl`, append only, one JSON object per cycle: cycle number, card id, card SHA256, git commit, view (discovery or confirm), timeframes, trials added, alpha spent, $\Delta$, $p$, verdict, MDE, UTC time. The pipeline never rewrites or deletes it.
+`research/ledger.jsonl`, append only, one JSON object per cycle: cycle number, card id, card SHA256, git commit, view (discovery or confirm), timeframes, trials added, alpha spent, $\Delta$, $p$, verdict, MDE, UTC time. The pipeline never rewrites or deletes it.
+
+## 11. Commands that check the record
+
+* `vwap research verify config`: the ledger follows this protocol (strictly increasing cycles, every run registered first with an unchanged card, budget respected, confirmations only after a PROMOTE) and every commit it names exists.
+* `vwap research replay <id|all> config`: recomputes a card on the discovery view without touching the ledger and compares delta, p value and verdict with the last recorded run, to $10^{-12}$.
+* The commands refuse to run if the ledger or the report directory would be ignored by git, because an untracked audit trail disappears on a fresh clone and silently resets the budget.
+
+## 12. Strategy cards: a model plus the backtest
+
+A strategy card answers a different question from a hypothesis card: not "does this feature move the outcome" but "does a calibrated model, traded with a threshold and costs, earn money out of sample". It lives in `hypotheses/S###.toml` and is registered, hashed and counted like a hypothesis card.
+
+* **Fields** (`kind = "strategy"` marks it): `id` (S followed by digits), `mechanism` in words, `model` (`majority`, `logistic` or `lgbm`), `timeframes` and `features` (names, empty means all 34). Every number (the grid, the calibration sizes, the threshold range, the folds, the costs, the gate limits) comes from `config/strategy.toml`, `validation.toml` and `backtest.toml`. The ledger entry records the SHA256 of each file the run read, so `verify` and `replay` notice a changed configuration. A changed configuration is a new study and needs new cards.
+* **Running.** `vwap research strategy S001 config` needs a committed, registered card and runs each timeframe once on the `DiscoveryView`: the walk forward of `VALIDATION.md` with the nested scheme of `MODELING.md` inside each fold, the signals above each fold's own threshold, and the backtest of the pooled out of fold signals (`BACKTEST.md`). A timeframe that was already run is refused. The result is written to `research/strategies/S001_15m.json` (tracked: per fold results, pooled metrics, the sweep, the daily net PnL, the reliability bins, importance and a thin sample of contributions) and one `strategy` entry is appended to the ledger.
+* **Trials, not alpha.** Each (card, timeframe) is one counted trial for the DSR and the PBO. A strategy run spends no alpha and does not use up the budget of 12 hypothesis cards: its gates are not p values but bootstrap intervals, the DSR and the PBO, and the deflation by the trial count is what protects them.
+* **Gates.** A strategy is PROMOTED only if every condition holds, and the ledger lists the failed ones otherwise. In more than half of the folds: $\mathrm{BSS} > 0$ and rejection precision above the base rate. Pooled: the $\mathrm{BSS}$ interval excludes zero and the expected calibration error of every class is at most 0.05. Economic: positive net expectancy in at least 60 percent of the folds, a pooled lower bound above zero, a positive net expectancy at 2 ticks of slippage per side. Overfitting: $\mathrm{DSR} \ge 0.95$ and $\mathrm{PBO} \le 0.2$, both undefined (and failing) until at least 4 strategy series exist and the strategy itself traded. Details in `MODELING.md`, section 9, `BACKTEST.md`, section 9 and `VALIDATION.md`.
+* **No runtime self test.** The self test of section 3 belongs to the hypothesis harness. For strategies the same control is the test suite: on a synthetic market a planted signal is promoted, confirmed and held out once, and noise is dropped and cannot be confirmed.
+* **Confirmation.** `vwap research confirm S001 config` confirms every timeframe of the card that has a PROMOTE verdict, once each, on the confirmation segment, with the configuration frozen and the models refit on the rolling pool of earlier events. The gates are the same without the DSR and the PBO, with the bootstrap interval of a one sided test at $\alpha = 0.05 / k$, $k$ the number of promoted cards and strategies.
+* **Holdout.** `research/FREEZE.toml` names the card and, for a strategy, its `width`. The run needs a `Confirmed` entry, a clean git tree and an unused lock file; the lock is shared with the hypothesis holdout, so only one run of either kind ever happens. The interval level is that of a one sided test at $\alpha = 0.05$.
+* **Checks.** `vwap research verify` also checks that each summary file matches the hash in the ledger, that the recorded configuration hashes still match the files, and that the recorded DSR and PBO follow from the series of the earlier trials. `vwap research replay all` recomputes every strategy run and compares the result with the tracked summary to a relative $10^{-9}$. `vwap research dsr config` prints the current DSR and PBO of every series with the trial count of the ledger.
+

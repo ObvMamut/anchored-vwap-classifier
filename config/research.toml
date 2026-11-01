@@ -7,8 +7,9 @@ confirm_end = "2023-09-30"
 holdout_start = "2023-10-01"
 
 cards_dir = "hypotheses"
-ledger_path = "artifacts/research/ledger.jsonl"
-report_dir = "reports/research"
+ledger_path = "research/ledger.jsonl"
+report_dir = "research/reports"
+strategies_dir = "research/strategies"
 
 # Alpha budget: omnibus plus a Bonferroni share per targeted card.
 alpha_total = 0.05
@@ -27,3 +28,10 @@ seed = 20260301
 
 # Round trip cost in ticks for net_ticks outcomes: 1 tick slippage per side plus commission.
 cost_ticks = 3.0
+
+# Harness controls and run limits.
+min_discovery_samples = 500
+selftest_planted_effect = 0.08
+selftest_null_trials = 60
+selftest_max_null_promotes = 1
+selftest_max_null_raw_rejects = 10

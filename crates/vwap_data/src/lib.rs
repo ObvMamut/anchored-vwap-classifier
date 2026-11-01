@@ -32,11 +32,22 @@ pub struct CleanSummary {
     pub first_utc: String,
     pub last_utc: String,
     pub rows_per_year: Vec<(i32, usize, String)>,
+    /// Hash over all yearly partitions; later stages verify it.
+    pub clean_fingerprint: String,
 }
 
 /// The whole Phase 1 stage: load, clean, check, flag rolls, write.
 pub fn run_clean(cfg: &DataConfig) -> Result<CleanSummary, DataError> {
     let input = Path::new(&cfg.input_path);
+    if let Some(expected) = &cfg.input_sha256 {
+        let found = write::sha256_file(input)?;
+        if &found != expected {
+            return Err(DataError::Validation(format!(
+                "{} has SHA256 {found} but config/data.toml pins {expected}; refusing to clean a different dataset",
+                input.display()
+            )));
+        }
+    }
     let raw = read_raw(input)?;
     let (mut bars, counts) = clean::clean(&raw, cfg)?;
     let mut quality = quality::analyze(&mut bars, cfg)?;
@@ -59,6 +70,7 @@ pub fn run_clean(cfg: &DataConfig) -> Result<CleanSummary, DataError> {
         counts,
         first_utc: diag::utc(bars.ts_us.first().copied().unwrap_or(0)).to_rfc3339(),
         last_utc: diag::utc(bars.ts_us.last().copied().unwrap_or(0)).to_rfc3339(),
+        clean_fingerprint: write::fingerprint(out_dir)?,
         rows_per_year,
     };
     let put = |name: &str, v: &dyn erased::Json| -> Result<(), DataError> {

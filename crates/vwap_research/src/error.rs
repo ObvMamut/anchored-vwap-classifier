@@ -40,4 +40,6 @@ pub enum ResearchError {
     SelfTest(String),
     #[error("not enough data: {0}")]
     NotEnoughData(String),
+    #[error("strategy: {0}")]
+    Strategy(String),
 }

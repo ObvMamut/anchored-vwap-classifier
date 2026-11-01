@@ -129,6 +129,7 @@ fn width_result(
     width: u32,
     cfg: &ResearchConfig,
     alpha: f64,
+    frozen: Option<f64>,
 ) -> WidthResult {
     let fidx = feature_names().iter().position(|n| *n == card.feature);
     let mut res = WidthResult {
@@ -148,7 +149,15 @@ fn width_result(
         1.0 - vals.iter().filter(|(_, x)| x.is_finite()).count() as f64 / vals.len().max(1) as f64;
     let finite: Vec<(&Sample, f64)> = vals.into_iter().filter(|(_, x)| x.is_finite()).collect();
     let xs: Vec<f64> = finite.iter().map(|(_, x)| *x).collect();
-    let (lo, hi) = (quantile(&xs, 1.0 / 3.0), quantile(&xs, 2.0 / 3.0));
+    let (mut lo, mut hi) = (quantile(&xs, 1.0 / 3.0), quantile(&xs, 2.0 / 3.0));
+    // a confirmation uses the cut point frozen on discovery, never one recomputed on new data
+    if let Some(c) = frozen {
+        match card.rule {
+            RuleKind::TopTercile => hi = c,
+            RuleKind::BottomTercile => lo = c,
+            _ => {}
+        }
+    }
     let arm_of = |x: f64| -> Option<usize> {
         match card.rule {
             RuleKind::TopTercile => Some(usize::from(x > hi)),
@@ -506,15 +515,71 @@ pub fn decide(
     (verdict, reasons, p, delta, mde)
 }
 
+/// The confirmation rule of `docs/PROTOCOL.md`: one sided p at or below the confirmation alpha
+/// on every timeframe, the predicted sign, and enough events in each arm.
+pub fn decide_confirm(
+    card: &Card,
+    widths: &[WidthResult],
+    alpha: f64,
+    cfg: &ResearchConfig,
+) -> (Verdict, Vec<String>, f64) {
+    let p = widths.iter().map(|w| w.p).fold(0.0, f64::max);
+    let mut reasons = Vec::new();
+    let predicted = match card.direction {
+        Direction::Positive => 1.0,
+        Direction::Negative => -1.0,
+        Direction::Any => 0.0,
+    };
+    if widths
+        .iter()
+        .any(|w| predicted != 0.0 && w.delta.signum() != predicted)
+    {
+        reasons.push("sign differs from the prediction on at least one timeframe".into());
+    }
+    if widths.iter().any(|w| {
+        let small = if card.rule == RuleKind::Groups {
+            w.n_subset
+        } else {
+            w.n_subset.min(w.n_comp)
+        };
+        small < cfg.min_events_per_arm
+    }) {
+        reasons.push("an arm has fewer than the minimum number of events".into());
+    }
+    if p > alpha {
+        reasons.push(format!(
+            "p = {p:.4} above the confirmation alpha {alpha:.4}"
+        ));
+    }
+    let v = if reasons.is_empty() {
+        Verdict::Confirmed
+    } else {
+        Verdict::NotConfirmed
+    };
+    (v, reasons, p)
+}
+
 /// Runs a card on a set of samples (a discovery or confirmation view's contents).
 pub fn run_card(card: &Card, samples: &[Sample], cfg: &ResearchConfig) -> CardResult {
-    let alpha = card.alpha.unwrap_or_else(|| cfg.alpha_per_card());
+    run_card_with(card, samples, cfg, &BTreeMap::new(), None)
+}
+
+/// Runs a card with optional frozen cut points per timeframe and an optional alpha override.
+pub fn run_card_with(
+    card: &Card,
+    samples: &[Sample],
+    cfg: &ResearchConfig,
+    frozen: &BTreeMap<u32, f64>,
+    alpha_override: Option<f64>,
+) -> CardResult {
+    let alpha =
+        alpha_override.unwrap_or_else(|| card.alpha.unwrap_or_else(|| cfg.alpha_per_card()));
     let widths: Vec<WidthResult> = card
         .timeframes
         .iter()
         .map(|&w| {
             let sub: Vec<&Sample> = samples.iter().filter(|s| s.width == w).collect();
-            width_result(card, &sub, w, cfg, alpha)
+            width_result(card, &sub, w, cfg, alpha, frozen.get(&w).copied())
         })
         .collect();
     let (verdict, reasons, p, delta, mde) = decide(card, &widths, cfg);

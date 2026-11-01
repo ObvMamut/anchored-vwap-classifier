@@ -1,10 +1,19 @@
+//! The `vwap` binary: one subcommand per pipeline stage.
+
+mod calendar;
+mod ctx;
+mod ops;
+mod report;
+mod research;
+mod stages;
+
 use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "vwap")]
+#[command(name = "vwap", about = "NQ anchored VWAP touch study")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -12,81 +21,73 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Label events with the triple barrier.
+    /// Data stages.
+    Data {
+        #[command(subcommand)]
+        stage: DataStage,
+    },
+    /// Event detection.
+    Events {
+        #[command(subcommand)]
+        stage: EventsStage,
+    },
+    /// Triple barrier labels.
     Labels {
         #[command(subcommand)]
         stage: LabelsStage,
     },
+    /// Controls and the gate 3a equivalence report.
+    Baselines {
+        #[command(subcommand)]
+        stage: BaselinesStage,
+    },
+    /// The frozen calendar snapshot for the K1 to K3 features.
+    Calendar {
+        #[command(subcommand)]
+        stage: CalendarStage,
+    },
+    /// Export the joined event, label and feature tables.
+    Features {
+        #[command(subcommand)]
+        stage: FeaturesStage,
+    },
+    /// The Markdown summary and the plots of the research record.
+    Report {
+        #[command(subcommand)]
+        stage: ReportStage,
+    },
+    /// Render the random day charts for the visual check.
+    Spotcheck { config: PathBuf },
     /// The closed research loop.
     Research {
         #[command(subcommand)]
         stage: ResearchStage,
     },
-    /// Controls and the Phase 3 gate.
-    Baselines {
+    /// The single, locked run on the holdout segment.
+    Holdout {
         #[command(subcommand)]
-        stage: BaselinesStage,
+        stage: HoldoutStage,
     },
-    /// Render the random day charts for the visual check.
-    Spotcheck { config: PathBuf },
-    /// Event detection stages.
-    Events {
-        #[command(subcommand)]
-        stage: EventsStage,
-    },
-    /// Data pipeline stages.
-    Data {
-        #[command(subcommand)]
-        stage: DataStage,
-    },
+    /// Preflight checks: configuration, data checksum, toolchain, disk, git.
+    Doctor { config: PathBuf },
+    /// Run the deterministic stages in order (not the alpha spending research runs).
+    Pipeline { config: PathBuf },
 }
 
 #[derive(Subcommand)]
-enum ResearchStage {
-    /// Register a committed hypothesis card.
-    Register { id: String, config: PathBuf },
-    /// Run a registered card on the discovery segment.
-    Run { id: String, config: PathBuf },
-    /// Show the ledger and the remaining budget.
-    Status { config: PathBuf },
-    /// Cycle 0: the omnibus predictive structure screen.
-    Omnibus { config: PathBuf },
-    /// Descriptive decomposition of the omnibus by outcome (spends no alpha).
-    Diagnose { config: PathBuf },
-}
-
-fn git(args: &[&str]) -> Result<String> {
-    let out = std::process::Command::new("git").args(args).output()?;
-    anyhow::ensure!(out.status.success(), "git {:?} failed", args);
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-/// The card file must be tracked and have no uncommitted changes.
-fn committed_card(
-    cfg: &vwap_core::ResearchConfig,
-    id: &str,
-) -> Result<(std::path::PathBuf, String)> {
-    let path = std::path::Path::new(&cfg.cards_dir).join(format!("{id}.toml"));
-    let p = path.to_string_lossy().to_string();
-    git(&["ls-files", "--error-unmatch", &p])
-        .map_err(|_| anyhow::anyhow!("{p} is not committed; commit the card first"))?;
-    anyhow::ensure!(
-        git(&["status", "--porcelain", "--", &p])?.is_empty(),
-        "{p} has uncommitted changes; commit the card first"
-    );
-    Ok((path, git(&["rev-parse", "HEAD"])?))
-}
-
-#[derive(Subcommand)]
-enum LabelsStage {
-    /// Build labeled events for every timeframe.
-    Build { config: PathBuf },
-}
-
-#[derive(Subcommand)]
-enum BaselinesStage {
-    /// Run the controls and the gate.
+enum HoldoutStage {
+    /// Needs research/FREEZE.toml and a confirmed card; runs once.
     Run { config: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum DataStage {
+    /// Clean the raw file and write yearly parquet plus reports.
+    Clean { config: PathBuf },
+    /// Print yearly first and last closes of the cleaned partitions.
+    Levels { config: PathBuf },
+    /// Print a first look at the raw file.
+    Inspect { config: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -96,222 +97,115 @@ enum EventsStage {
 }
 
 #[derive(Subcommand)]
-enum DataStage {
-    /// Print yearly first and last closes of the cleaned partitions.
-    Levels { config: PathBuf },
-    /// Clean the raw file and write yearly parquet plus reports.
-    Clean { config: PathBuf },
-    /// Print a first look at the raw file.
-    Inspect { config: PathBuf },
+enum LabelsStage {
+    /// Build labeled events for every timeframe.
+    Build { config: PathBuf },
 }
 
-fn main() -> Result<()> {
+#[derive(Subcommand)]
+enum CalendarStage {
+    /// Download the official schedules, validate them and write the snapshot (needs internet).
+    Fetch { config: PathBuf },
+    /// Freeze a hand supplied CSV of `kind,date` rows with the same validation.
+    Import { csv: PathBuf, config: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum FeaturesStage {
+    /// Write features_<w>m.parquet for every timeframe.
+    Build { config: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum ReportStage {
+    /// Write reports/summary.md and the strategy plots.
+    Build { config: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum BaselinesStage {
+    /// Run the controls and the equivalence verdicts.
+    Run { config: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum ResearchStage {
+    /// Register a committed hypothesis card.
+    Register { id: String, config: PathBuf },
+    /// Run a registered card on the discovery segment.
+    Run { id: String, config: PathBuf },
+    /// Run a registered strategy card (a model plus the backtest) on the discovery segment.
+    Strategy { id: String, config: PathBuf },
+    /// DSR and PBO of every strategy trial, with the trial count of the ledger.
+    Dsr { config: PathBuf },
+    /// Show the ledger and the remaining budget.
+    Status { config: PathBuf },
+    /// Cycle 0: the omnibus predictive structure screen.
+    Omnibus { config: PathBuf },
+    /// Descriptive decomposition of the omnibus by outcome (spends no alpha).
+    Diagnose { config: PathBuf },
+    /// One shot confirmation of a promoted card on the confirmation segment.
+    Confirm { id: String, config: PathBuf },
+    /// Check the ledger against the protocol and the repository.
+    Verify { config: PathBuf },
+    /// Recompute a card (or `all`) and compare with the recorded result.
+    Replay { id: String, config: PathBuf },
+}
+
+fn main() {
+    if let Err(e) = run() {
+        // a clear message and a non zero exit code, without a backtrace
+        eprintln!("error: {e:#}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
-    match cli.command {
-        Command::Research { stage } => match stage {
-            ResearchStage::Status { config } => {
-                let cfg = vwap_core::load_research_config(&config)?;
-                print!("{}", vwap_research::cycle::status(&cfg)?);
-            }
-            ResearchStage::Omnibus { config } => {
-                let cfg = vwap_core::load_research_config(&config)?;
-                let commit = git(&["rev-parse", "HEAD"])?;
-                let data = vwap_core::load_data_config(&config)?;
-                let ev = vwap_core::load_events_config(&config)?;
-                let lab = vwap_core::load_labels_config(&config)?;
-                let bars =
-                    vwap_data::write::read_partitioned(std::path::Path::new(&data.output_dir))?;
-                let samples = vwap_research::data::assemble(&data, &ev, &lab, &bars);
-                let r = vwap_research::cycle::execute_omnibus(&cfg, &commit, &samples, |w| {
-                    lab.horizon(w)
-                })?;
-                println!("{}", serde_json::to_string_pretty(&r)?);
-            }
-            ResearchStage::Diagnose { config } => {
-                let cfg = vwap_core::load_research_config(&config)?;
-                let commit = git(&["rev-parse", "HEAD"])?;
-                let data = vwap_core::load_data_config(&config)?;
-                let ev = vwap_core::load_events_config(&config)?;
-                let lab = vwap_core::load_labels_config(&config)?;
-                let bars =
-                    vwap_data::write::read_partitioned(std::path::Path::new(&data.output_dir))?;
-                let samples = vwap_research::data::assemble(&data, &ev, &lab, &bars);
-                let tasks = [
-                    vwap_research::omnibus::Task::Direction,
-                    vwap_research::omnibus::Task::Chop,
-                ];
-                let r = vwap_research::cycle::execute_diagnostic(
-                    &cfg,
-                    &commit,
-                    &samples,
-                    |w| lab.horizon(w),
-                    &tasks,
-                    500,
-                )?;
-                println!("{}", serde_json::to_string_pretty(&r)?);
-            }
-            ResearchStage::Register { id, config } => {
-                let cfg = vwap_core::load_research_config(&config)?;
-                let (path, commit) = committed_card(&cfg, &id)?;
-                let hash = vwap_research::cycle::register(&cfg, &path, &commit)?;
-                println!("registered {id} sha256 {hash} at commit {commit}");
-            }
-            ResearchStage::Run { id, config } => {
-                let cfg = vwap_core::load_research_config(&config)?;
-                let (path, commit) = committed_card(&cfg, &id)?;
-                let data = vwap_core::load_data_config(&config)?;
-                let ev = vwap_core::load_events_config(&config)?;
-                let lab = vwap_core::load_labels_config(&config)?;
-                let bars =
-                    vwap_data::write::read_partitioned(std::path::Path::new(&data.output_dir))?;
-                let samples = vwap_research::data::assemble(&data, &ev, &lab, &bars);
-                let r = vwap_research::cycle::execute(&cfg, &path, &commit, &samples)?;
-                println!("{}", serde_json::to_string_pretty(&r)?);
-            }
+    let text = match cli.command {
+        Command::Data { stage } => match stage {
+            DataStage::Clean { config } => stages::data_clean(&config)?,
+            DataStage::Levels { config } => stages::data_levels(&config)?,
+            DataStage::Inspect { config } => stages::data_inspect(&config)?,
         },
+        Command::Events {
+            stage: EventsStage::Detect { config },
+        } => stages::events_detect(&config)?,
         Command::Labels {
             stage: LabelsStage::Build { config },
-        } => {
-            let data = vwap_core::load_data_config(&config)?;
-            let ev = vwap_core::load_events_config(&config)?;
-            let lab = vwap_core::load_labels_config(&config)?;
-            let bars = vwap_data::write::read_partitioned(std::path::Path::new(&data.output_dir))?;
-            let params = vwap_events::event_params(&data, &ev);
-            for &w in &ev.timeframes {
-                let coarse = vwap_events::build(&bars, &data, w, ev.atr_length);
-                let (events, _) = vwap_events::detect(&coarse, &params);
-                let lp = vwap_labels::LabelParams {
-                    m1: lab.m1,
-                    m2: lab.m2,
-                    horizon: lab.horizon(w),
-                };
-                let (labeled, drops) = vwap_labels::label_events(&events, &coarse, &bars, &lp);
-                let mut counts = [0usize; 3];
-                let mut by_year = std::collections::BTreeMap::new();
-                for l in &labeled {
-                    if let Some(x) = l.class.and_then(|c| counts.get_mut(c.index())) {
-                        *x += 1;
-                    }
-                    let year = vwap_data::diag::utc(l.event.open_us)
-                        .format("%Y")
-                        .to_string()
-                        .parse::<i32>()
-                        .unwrap_or(0);
-                    let e: &mut (usize, usize) = by_year.entry(year).or_default();
-                    e.0 += 1;
-                    e.1 += usize::from(l.ambiguous);
-                }
-                let report = vwap_labels::LabelReport {
-                    width: w,
-                    m1: lab.m1,
-                    m2: lab.m2,
-                    horizon: lab.horizon(w),
-                    drops,
-                    class_counts: counts,
-                    ambiguous_by_year: by_year,
-                };
-                vwap_labels::write_labels(
-                    &labeled,
-                    &report,
-                    std::path::Path::new(&lab.output_dir),
-                )?;
-                println!("{}", serde_json::to_string(&report)?);
-            }
-        }
+        } => stages::labels_build(&config)?,
+        Command::Calendar { stage } => match stage {
+            CalendarStage::Fetch { config } => calendar::fetch(&config)?,
+            CalendarStage::Import { csv, config } => calendar::import(&csv, &config)?,
+        },
+        Command::Features {
+            stage: FeaturesStage::Build { config },
+        } => stages::features_build(&config)?,
+        Command::Report {
+            stage: ReportStage::Build { config },
+        } => report::build(&config)?,
         Command::Baselines {
             stage: BaselinesStage::Run { config },
-        } => {
-            let data = vwap_core::load_data_config(&config)?;
-            let ev = vwap_core::load_events_config(&config)?;
-            let lab = vwap_core::load_labels_config(&config)?;
-            let base = vwap_core::load_baselines_config(&config)?;
-            let res = vwap_core::load_research_config(&config)?;
-            let bars = vwap_data::write::read_partitioned(std::path::Path::new(&data.output_dir))?;
-            // gate 3a is computed on the discovery segment only
-            let window = (
-                vwap_core::ResearchConfig::date_us(&res.discovery_start),
-                vwap_core::ResearchConfig::date_us(&res.confirm_start),
-            );
-            let r = vwap_baselines::run_baselines(&data, &ev, &lab, &base, window, &bars)?;
-            println!("{}", vwap_baselines::run::render_markdown(&r));
-        }
-        Command::Spotcheck { config } => {
-            let data = vwap_core::load_data_config(&config)?;
-            let ev = vwap_core::load_events_config(&config)?;
-            let val = vwap_core::load_validation_config(&config)?;
-            let bars = vwap_data::write::read_partitioned(std::path::Path::new(&data.output_dir))?;
-            let params = vwap_events::event_params(&data, &ev);
-            let mut all = Vec::new();
-            let mut chosen: Option<Vec<i32>> = None;
-            for &w in &ev.timeframes {
-                let coarse = vwap_events::build(&bars, &data, w, ev.atr_length);
-                let (events, _) = vwap_events::detect(&coarse, &params);
-                let sessions = match &chosen {
-                    Some(s) => s.clone(),
-                    None => {
-                        let eligible =
-                            vwap_report::spotcheck::eligible_sessions(&coarse, val.holdout_months);
-                        let s = vwap_report::spotcheck::pick_sessions(
-                            &eligible,
-                            ev.spotcheck_days,
-                            ev.spotcheck_seed,
-                        );
-                        chosen = Some(s.clone());
-                        s
-                    }
-                };
-                let entries = vwap_report::spotcheck::spotcheck(
-                    &coarse,
-                    &events,
-                    &sessions,
-                    ev.exclude_minutes,
-                    &ev.font_path,
-                    std::path::Path::new(&ev.spotcheck_dir),
-                )?;
-                all.extend(entries);
-            }
-            println!("{}", serde_json::to_string_pretty(&all)?);
-        }
-        Command::Events { stage } => match stage {
-            EventsStage::Detect { config } => {
-                let data = vwap_core::load_data_config(&config)?;
-                let ev = vwap_core::load_events_config(&config)?;
-                let bars =
-                    vwap_data::write::read_partitioned(std::path::Path::new(&data.output_dir))?;
-                let s = vwap_events::run_events(&data, &ev, &bars)?;
-                println!("{}", serde_json::to_string_pretty(&s)?);
-            }
+        } => stages::baselines_run(&config)?,
+        Command::Spotcheck { config } => stages::spotcheck(&config)?,
+        Command::Doctor { config } => ops::doctor(&config)?,
+        Command::Pipeline { config } => ops::pipeline(&config)?,
+        Command::Holdout {
+            stage: HoldoutStage::Run { config },
+        } => research::holdout(&config)?,
+        Command::Research { stage } => match stage {
+            ResearchStage::Register { id, config } => research::register(&id, &config)?,
+            ResearchStage::Run { id, config } => research::run(&id, &config)?,
+            ResearchStage::Strategy { id, config } => research::strategy(&id, &config)?,
+            ResearchStage::Dsr { config } => research::dsr(&config)?,
+            ResearchStage::Status { config } => research::status(&config)?,
+            ResearchStage::Omnibus { config } => research::omnibus(&config)?,
+            ResearchStage::Diagnose { config } => research::diagnose(&config)?,
+            ResearchStage::Confirm { id, config } => research::confirm(&id, &config)?,
+            ResearchStage::Verify { config } => research::verify(&config)?,
+            ResearchStage::Replay { id, config } => research::replay(&id, &config)?,
         },
-        Command::Data { stage } => match stage {
-            DataStage::Levels { config } => {
-                let cfg = vwap_core::config::load_data_config(&config)?;
-                let b = vwap_data::write::read_partitioned(std::path::Path::new(&cfg.output_dir))?;
-                let mut last_year = i32::MIN;
-                for (i, t) in b.ts_us.iter().enumerate() {
-                    let y = vwap_data::diag::utc(*t)
-                        .format("%Y")
-                        .to_string()
-                        .parse::<i32>()
-                        .unwrap_or(0);
-                    if y != last_year {
-                        println!("{y} first close {}", b.close.get(i).copied().unwrap_or(0.0));
-                        last_year = y;
-                    }
-                }
-                println!("rows {} last close {:?}", b.len(), b.close.last());
-            }
-            DataStage::Clean { config } => {
-                let cfg = vwap_core::config::load_data_config(&config)?;
-                let s = vwap_data::run_clean(&cfg)?;
-                println!("{}", serde_json::to_string_pretty(&s)?);
-            }
-            DataStage::Inspect { config } => {
-                let cfg = vwap_core::config::load_data_config(&config)?;
-                let raw = vwap_data::read_raw(std::path::Path::new(&cfg.input_path))?;
-                let d = vwap_data::diag::raw_diagnostics(&raw);
-                println!("{}", serde_json::to_string_pretty(&d)?);
-            }
-        },
-    }
+    };
+    println!("{text}");
     Ok(())
 }

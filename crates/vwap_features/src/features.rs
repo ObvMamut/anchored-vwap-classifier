@@ -2,8 +2,10 @@
 //! (all of whose fields are known at the close of the touch bar) and finished sessions.
 #![allow(clippy::indexing_slicing)]
 
+use vwap_core::FeaturesConfig;
 use vwap_events::{CoarseBars, Event};
 
+use crate::calendar::CalendarTable;
 use crate::levels::LevelTable;
 use crate::view::{CausalView, SessionIndex};
 
@@ -24,7 +26,7 @@ impl FeatureTable {
     }
 }
 
-const NAMES: [&str; 18] = [
+const NAMES: [&str; 34] = [
     "vslope_align",
     "dist_travelled",
     "bars_on_side",
@@ -43,7 +45,28 @@ const NAMES: [&str; 18] = [
     "dist_onh",
     "time_block",
     "conf_count",
+    "cal_cpi_day",
+    "cal_cpi_until",
+    "cal_cpi_since",
+    "cal_fomc_day",
+    "cal_fomc_until",
+    "cal_fomc_since",
+    "cal_nfp_day",
+    "cal_nfp_until",
+    "cal_nfp_since",
+    "close_location",
+    "bar_range",
+    "tod_sin",
+    "tod_cos",
+    "weekday",
+    "dist_onl",
+    "band_pos_max",
 ];
+
+/// Columns computed by `feature_row`: the 18 original ones, then the 7 appended after the
+/// calendar columns.
+const ROW_ORIGINAL: usize = 18;
+const ROW_APPENDED: usize = 7;
 
 pub fn feature_names() -> &'static [&'static str] {
     &NAMES
@@ -73,15 +96,16 @@ fn feature_row(
     v: &CausalView,
     levels: &LevelTable,
     sessions: &SessionIndex,
-) -> [f64; 18] {
+    cfg: &FeaturesConfig,
+) -> [f64; ROW_ORIGINAL + ROW_APPENDED] {
     let nan = f64::NAN;
     let t = v.t();
     let s = f64::from(e.side);
     let sigma = e.atr;
     let w = v.width() as usize;
 
-    // vwap slope aligned with the approach side, over about 60 minutes
-    let l_slope = (60 / w).max(1);
+    // vwap slope aligned with the approach side over `slope_minutes`
+    let l_slope = (cfg.slope_minutes / w).max(1);
     let vslope_align = match (t.checked_sub(l_slope), v.vwap(t)) {
         (Some(j), Some(now)) if v.in_touch_session(j) => match v.vwap(j) {
             Some(then) => s * (now - then) / (l_slope as f64 * sigma),
@@ -96,22 +120,25 @@ fn feature_row(
         .fold(f64::NAN, f64::max)
         / sigma;
 
-    // approach speed over 3 bars
-    let speed = match (t.checked_sub(4), signed_dist(v, s, t.wrapping_sub(1))) {
+    // approach speed over `speed_bars` bars
+    let speed = match (
+        t.checked_sub(cfg.speed_bars + 1),
+        signed_dist(v, s, t.wrapping_sub(1)),
+    ) {
         (Some(j), Some(d1)) if v.in_touch_session(j) => match signed_dist(v, s, j) {
-            Some(d0) => (d0 - d1) / (3.0 * sigma),
+            Some(d0) => (d0 - d1) / (cfg.speed_bars as f64 * sigma),
             None => nan,
         },
         _ => nan,
     };
 
-    // relative volume against the same clock slot in up to 20 earlier sessions
+    // relative volume against the same clock slot in earlier sessions
     let rel_volume = {
         let mut hist = Vec::new();
         if let (Some(pos), Some(m), Some(vol)) =
             (sessions.position_of_bar(t), v.minute(t), v.weight(t))
         {
-            for k in (0..pos).rev().take(20) {
+            for k in (0..pos).rev().take(cfg.rel_volume_sessions) {
                 let (_, a, z) = sessions.spans[k];
                 // earlier sessions are entirely before the touch bar
                 if let Some(x) = (a..z)
@@ -121,7 +148,7 @@ fn feature_row(
                     hist.push(x);
                 }
             }
-            if hist.len() >= 10 {
+            if hist.len() >= cfg.rel_volume_min_sessions {
                 vol / (hist.iter().sum::<f64>() / hist.len() as f64)
             } else {
                 nan
@@ -135,7 +162,8 @@ fn feature_row(
     let band_width = v.vwap_sd(t).map_or(nan, |x| x / sigma);
 
     // levels
-    let after_open = (570..1080).contains(&close_minute);
+    let after_open =
+        (u32::from(cfg.rth_open_minute)..cfg.globex_open_minute).contains(&close_minute);
     let lv = levels.for_event(e.trading_date, after_open);
     let rej = |l: f64| s * (l - e.close) / sigma;
     let (dpdh, dpdl, dpdc, donh, donl) = match lv {
@@ -145,29 +173,52 @@ fn feature_row(
     let near = [dpdh, dpdl, dpdc, donh, donl]
         .iter()
         .filter(|x| x.is_finite())
-        .any(|x| x.abs() <= 0.5);
+        .any(|x| x.abs() <= cfg.confluence_band_sigma);
     let conf_flag = if lv.is_some() {
         f64::from(u8::from(near))
     } else {
         nan
     };
-    // number of the five levels within half a volatility unit of the touch close
+    // number of the five levels within the confluence band of the touch close
     let conf_count = if lv.is_some() {
         [dpdh, dpdl, dpdc, donh, donl]
             .iter()
-            .filter(|x| x.is_finite() && x.abs() <= 0.5)
+            .filter(|x| x.is_finite() && x.abs() <= cfg.confluence_band_sigma)
             .count() as f64
     } else {
         nan
     };
 
     // time blocks by the New York clock of the touch close
-    let time_block = match close_minute {
-        570..630 => 0.0,
-        630..840 => 1.0,
-        840..1020 => 2.0,
-        _ => 3.0,
+    let edges = cfg.time_block_edges;
+    let time_block = if (edges[0]..edges[1]).contains(&close_minute) {
+        0.0
+    } else if (edges[1]..edges[2]).contains(&close_minute) {
+        1.0
+    } else if (edges[2]..edges[3]).contains(&close_minute) {
+        2.0
+    } else {
+        3.0
     };
+
+    // appended features: the touch bar's shape, the clock as a circle, the weekday, the distance
+    // to the overnight low and the band position of the approach extreme
+    let range = v.high(t).zip(v.low(t)).map_or(nan, |(h, l)| h - l);
+    let close_location = match (v.close(t), v.low(t)) {
+        (Some(c), Some(l)) if range > 0.0 => (c - l) / range,
+        _ => nan,
+    };
+    let bar_range = range / sigma;
+    let angle = 2.0 * std::f64::consts::PI * f64::from(close_minute) / 1440.0;
+    let weekday = f64::from((e.trading_date + 3).rem_euclid(7));
+    let band_pos_max = (1..=n_run)
+        .filter_map(|k| {
+            let j = t - k;
+            let sd = v.vwap_sd(j)?;
+            let d = signed_dist(v, s, j)?;
+            (sd.is_finite() && sd > 0.0).then_some(d / sd)
+        })
+        .fold(f64::NAN, f64::max);
 
     [
         vslope_align,
@@ -179,7 +230,7 @@ fn feature_row(
         f64::from(e.raw_touches_before),
         f64::from(close_minute),
         f64::from(e.minutes_since_anchor),
-        sigma / e.close * 1e4,
+        sigma / e.close * cfg.vol_ratio_scale,
         band_width,
         conf_flag,
         dpdh,
@@ -188,6 +239,13 @@ fn feature_row(
         donh,
         time_block,
         conf_count,
+        close_location,
+        bar_range,
+        angle.sin(),
+        angle.cos(),
+        weekday,
+        donl,
+        band_pos_max,
     ]
 }
 
@@ -197,12 +255,17 @@ pub fn build_features(
     bars: &CoarseBars,
     levels: &LevelTable,
     sessions: &SessionIndex,
+    calendar: &CalendarTable,
+    cfg: &FeaturesConfig,
 ) -> FeatureTable {
     let mut cols = vec![Vec::with_capacity(events.len()); NAMES.len()];
     for e in events {
         let v = CausalView::new(bars, e.bar);
-        let row = feature_row(e, &v, levels, sessions);
-        for (c, x) in cols.iter_mut().zip(row) {
+        let row = feature_row(e, &v, levels, sessions, cfg);
+        let cal = calendar.features(e.close_us, e.session);
+        let (head, tail) = row.split_at(ROW_ORIGINAL);
+        let all = head.iter().chain(cal.iter()).chain(tail.iter()).copied();
+        for (c, x) in cols.iter_mut().zip(all) {
             c.push(x);
         }
     }

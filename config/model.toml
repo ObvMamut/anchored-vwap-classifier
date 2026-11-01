@@ -1,0 +1,11 @@
+# Fixed LightGBM settings of the omnibus screen (cycle 0) and its descriptive decomposition.
+blocks = 6
+rounds = 60
+learning_rate = 0.05
+num_leaves = 7
+min_data_in_leaf = 40
+feature_fraction = 0.8
+lambda_l2 = 5.0
+min_rows = 1500
+min_train_rows = 300
+diagnostic_permutations = 500

@@ -64,6 +64,10 @@ impl TryFrom<String> for HhMm {
 #[serde(deny_unknown_fields)]
 pub struct DataConfig {
     pub input_path: String,
+    /// SHA256 of the raw file. When set, `data clean` refuses a file that differs, so every
+    /// recorded result stays tied to one dataset.
+    #[serde(default)]
+    pub input_sha256: Option<String>,
     pub output_dir: String,
     pub artifact_dir: String,
     pub timestamp_kind: TimestampKind,
@@ -86,6 +90,8 @@ pub struct DataConfig {
     pub early_close_time: HhMm,
     pub flat_time_globex: HhMm,
     pub flat_time_rth: HhMm,
+    /// Bars of a normal full Globex session, used to flag thin sessions.
+    pub expected_session_bars: f64,
 }
 
 impl DataConfig {
@@ -147,7 +153,10 @@ pub struct EventsConfig {
     pub spotcheck_days: usize,
     pub spotcheck_seed: u64,
     pub spotcheck_dir: String,
-    pub font_path: String,
+    /// Candidate font files for the charts, tried in order.
+    pub font_paths: Vec<String>,
+    /// Sessions shorter than this many minutes are not drawn.
+    pub spotcheck_min_session_minutes: u32,
 }
 
 impl EventsConfig {
@@ -166,7 +175,10 @@ impl EventsConfig {
     }
 }
 
-fn read_toml<T: serde::de::DeserializeOwned>(dir: &Path, name: &str) -> Result<T, CoreError> {
+pub(crate) fn read_toml<T: serde::de::DeserializeOwned>(
+    dir: &Path,
+    name: &str,
+) -> Result<T, CoreError> {
     let path = dir.join(name);
     let text = std::fs::read_to_string(&path).map_err(|source| CoreError::ConfigIo {
         path: path.display().to_string(),
@@ -183,17 +195,6 @@ pub fn load_events_config(dir: &Path) -> Result<EventsConfig, CoreError> {
     let cfg: EventsConfig = read_toml(dir, "events.toml")?;
     cfg.validate()?;
     Ok(cfg)
-}
-
-/// `config/validation.toml` (grown as later phases need more fields).
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ValidationConfig {
-    pub holdout_months: u32,
-}
-
-pub fn load_validation_config(dir: &Path) -> Result<ValidationConfig, CoreError> {
-    read_toml(dir, "validation.toml")
 }
 
 /// Volatility scale for the barriers.
@@ -260,7 +261,8 @@ pub struct BaselinesConfig {
     pub random_levels_per_session: u32,
     pub random_level_z_max: f64,
     pub shifted_anchor_minutes: Vec<u32>,
-    pub stratum_hour_buckets: bool,
+    /// Width of the time of day strata, in minutes (60 gives 24 buckets).
+    pub stratum_minutes: u32,
     pub min_stratum_events: usize,
     pub bootstrap_draws: usize,
     pub permutations: usize,
@@ -274,12 +276,8 @@ pub fn load_baselines_config(dir: &Path) -> Result<BaselinesConfig, CoreError> {
     read_toml(dir, "baselines.toml")
 }
 
-/// The first instant of the holdout, as UTC microseconds, given the last bar time.
-pub fn holdout_start_us(last_ts_us: i64, holdout_months: u32) -> i64 {
-    use chrono::{DateTime, Months};
-    DateTime::from_timestamp_micros(last_ts_us)
-        .and_then(|d| d.checked_sub_months(Months::new(holdout_months)))
-        .map_or(last_ts_us, |d| d.timestamp_micros())
+fn default_strategies_dir() -> String {
+    "research/strategies".into()
 }
 
 /// `config/research.toml`.
@@ -294,6 +292,9 @@ pub struct ResearchConfig {
     pub cards_dir: String,
     pub ledger_path: String,
     pub report_dir: String,
+    /// Tracked summaries of the strategy runs (`vwap research strategy`).
+    #[serde(default = "default_strategies_dir")]
+    pub strategies_dir: String,
     pub alpha_total: f64,
     pub alpha_omnibus: f64,
     pub max_cards: usize,
@@ -306,6 +307,14 @@ pub struct ResearchConfig {
     pub bootstrap_draws: usize,
     pub omnibus_permutations: usize,
     pub seed: u64,
+    /// Fewer discovery samples than this make a card run refuse to start.
+    pub min_discovery_samples: usize,
+    /// Harness controls: size of the planted effect, null trials, and how many false
+    /// promotions or raw rejections the null trials may show.
+    pub selftest_planted_effect: f64,
+    pub selftest_null_trials: usize,
+    pub selftest_max_null_promotes: usize,
+    pub selftest_max_null_raw_rejects: usize,
 }
 
 impl ResearchConfig {
@@ -352,4 +361,173 @@ pub fn load_research_config(dir: &Path) -> Result<ResearchConfig, CoreError> {
     let cfg: ResearchConfig = read_toml(dir, "research.toml")?;
     cfg.validate()?;
     Ok(cfg)
+}
+
+/// `config/features.toml`. The defaults are the values used for every recorded result, and a
+/// test checks that the file in `config/` equals them.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FeaturesConfig {
+    /// Window of the VWAP slope feature, in minutes.
+    pub slope_minutes: usize,
+    /// Distance in bars of the approach speed feature.
+    pub speed_bars: usize,
+    /// Earlier sessions used for relative volume.
+    pub rel_volume_sessions: usize,
+    /// Fewer earlier sessions than this make relative volume undefined.
+    pub rel_volume_min_sessions: usize,
+    /// A level counts as coinciding with the VWAP within this many sigma.
+    pub confluence_band_sigma: f64,
+    /// Regular trading hours, New York minutes of day.
+    pub rth_open_minute: u16,
+    pub rth_close_minute: u16,
+    /// The Globex anchor, New York minute of day.
+    pub globex_open_minute: u32,
+    /// Four edges of the three daytime time blocks; everything else is block 3.
+    pub time_block_edges: [u32; 4],
+    /// Scale of the volatility ratio feature.
+    pub vol_ratio_scale: f64,
+    /// Where `vwap features build` writes the exported feature tables.
+    pub output_dir: String,
+    /// The calendar features K1 to K3 need the frozen snapshot of `vwap calendar fetch`. While
+    /// this is false they are NaN.
+    pub calendar_enabled: bool,
+    /// Cap of the minutes until and since a release.
+    pub calendar_cap_minutes: u32,
+}
+
+impl Default for FeaturesConfig {
+    fn default() -> Self {
+        Self {
+            slope_minutes: 60,
+            speed_bars: 3,
+            rel_volume_sessions: 20,
+            rel_volume_min_sessions: 10,
+            confluence_band_sigma: 0.5,
+            rth_open_minute: 570,
+            rth_close_minute: 960,
+            globex_open_minute: 1080,
+            time_block_edges: [570, 630, 840, 1020],
+            vol_ratio_scale: 10_000.0,
+            output_dir: "artifacts/features".into(),
+            calendar_enabled: false,
+            calendar_cap_minutes: 1440,
+        }
+    }
+}
+
+impl FeaturesConfig {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        let e = &self.time_block_edges;
+        if self.slope_minutes == 0
+            || self.speed_bars == 0
+            || self.rel_volume_min_sessions > self.rel_volume_sessions
+            || !(e[0] < e[1] && e[1] < e[2] && e[2] < e[3])
+            || self.rth_open_minute >= self.rth_close_minute
+        {
+            return Err(CoreError::ConfigInvalid(
+                "features.toml: windows must be positive, minimum sessions at most the window, and time block edges increasing".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub fn load_features_config(dir: &Path) -> Result<FeaturesConfig, CoreError> {
+    let cfg: FeaturesConfig = read_toml(dir, "features.toml")?;
+    cfg.validate()?;
+    Ok(cfg)
+}
+
+/// `config/model.toml`: the fixed LightGBM settings of the omnibus screen. Deterministic
+/// execution settings (single thread, fixed seeds) are policy and stay in code.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelConfig {
+    /// Blocks of the expanding blocked cross validation.
+    pub blocks: usize,
+    pub rounds: i64,
+    pub learning_rate: f64,
+    pub num_leaves: i64,
+    pub min_data_in_leaf: i64,
+    pub feature_fraction: f64,
+    pub lambda_l2: f64,
+    /// Fewer usable rows than this make the screen refuse to run.
+    pub min_rows: usize,
+    /// A fold with fewer training rows than this is skipped.
+    pub min_train_rows: usize,
+    /// Permutations for the descriptive decomposition.
+    pub diagnostic_permutations: usize,
+}
+
+impl Default for ModelConfig {
+    fn default() -> Self {
+        Self {
+            blocks: 6,
+            rounds: 60,
+            learning_rate: 0.05,
+            num_leaves: 7,
+            min_data_in_leaf: 40,
+            feature_fraction: 0.8,
+            lambda_l2: 5.0,
+            min_rows: 1500,
+            min_train_rows: 300,
+            diagnostic_permutations: 500,
+        }
+    }
+}
+
+pub fn load_model_config(dir: &Path) -> Result<ModelConfig, CoreError> {
+    let cfg: ModelConfig = read_toml(dir, "model.toml")?;
+    if cfg.blocks < 3 || cfg.rounds < 1 || cfg.num_leaves < 2 {
+        return Err(CoreError::ConfigInvalid(
+            "model.toml: at least 3 blocks, 1 round and 2 leaves are required".into(),
+        ));
+    }
+    Ok(cfg)
+}
+
+#[cfg(test)]
+mod config_file_tests {
+    use super::*;
+
+    fn dir() -> &'static Path {
+        Path::new("../../config")
+    }
+
+    #[test]
+    fn every_config_file_in_the_repository_loads_and_validates() {
+        load_data_config(dir()).unwrap();
+        load_events_config(dir()).unwrap();
+        load_labels_config(dir()).unwrap();
+        load_baselines_config(dir()).unwrap();
+        load_research_config(dir()).unwrap();
+        load_features_config(dir()).unwrap();
+        load_model_config(dir()).unwrap();
+    }
+
+    #[test]
+    fn features_and_model_files_equal_the_values_behind_the_recorded_results() {
+        assert_eq!(
+            load_features_config(dir()).unwrap(),
+            FeaturesConfig::default()
+        );
+        assert_eq!(load_model_config(dir()).unwrap(), ModelConfig::default());
+    }
+
+    #[test]
+    fn invalid_values_are_rejected() {
+        let f = FeaturesConfig {
+            time_block_edges: [570, 570, 840, 1020],
+            ..FeaturesConfig::default()
+        };
+        assert!(f.validate().is_err());
+        let f = FeaturesConfig {
+            rel_volume_min_sessions: 30,
+            ..FeaturesConfig::default()
+        };
+        assert!(f.validate().is_err());
+        let r = load_research_config(dir()).unwrap();
+        assert!((r.alpha_per_card() - 0.04 / 12.0).abs() < 1e-12);
+    }
 }
