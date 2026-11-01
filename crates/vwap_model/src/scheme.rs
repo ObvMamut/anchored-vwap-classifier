@@ -45,6 +45,10 @@ pub struct Params<'a> {
     pub validation: &'a ValidationConfig,
     pub embargo_us: i64,
     pub seed: u64,
+    /// Train, select and calibrate on touches that resolve (rejection against breakthrough)
+    /// only. Every touch is still predicted, and the threshold is tuned on all of them. The
+    /// three class objective is dominated by chop, which is predictable from the clock.
+    pub direction: bool,
 }
 
 /// One test event for the beeswarm: its feature values and the contribution of each feature to
@@ -105,6 +109,19 @@ fn rows_of(t: &Table, idx: &[usize]) -> (Matrix, Vec<usize>) {
     )
 }
 
+/// The rows a model is fit on: all of them, or the resolved ones in direction mode.
+fn fit_rows(t: &Table, idx: &[usize], p: &Params) -> (Matrix, Vec<usize>) {
+    if !p.direction {
+        return rows_of(t, idx);
+    }
+    let keep: Vec<usize> = idx
+        .iter()
+        .copied()
+        .filter(|&i| t.y.get(i).copied() != Some(2))
+        .collect();
+    rows_of(t, &keep)
+}
+
 fn candidates(
     family: Family,
     t: &Table,
@@ -115,7 +132,7 @@ fn candidates(
         Family::Majority => {
             let mut per_fold = Vec::new();
             for f in folds {
-                let (x, y) = rows_of(t, &f.train);
+                let (x, y) = fit_rows(t, &f.train, p);
                 let mut m = Majority::new();
                 m.fit(&x, &y)?;
                 per_fold.push(m.predict_proba(&t.x.select(&f.test))?);
@@ -133,7 +150,7 @@ fn candidates(
             for &alpha in &p.cfg.logistic_l2_grid {
                 let mut per_fold = Vec::new();
                 for f in folds {
-                    let (x, y) = rows_of(t, &f.train);
+                    let (x, y) = fit_rows(t, &f.train, p);
                     let mut m = Logistic::new(alpha, p.cfg);
                     m.fit(&x, &y)?;
                     per_fold.push(m.predict_proba(&t.x.select(&f.test))?);
@@ -154,7 +171,7 @@ fn candidates(
                 // checkpoints[fold] = list of (round, probs)
                 let mut cps = Vec::new();
                 for f in folds {
-                    let (x, y) = rows_of(t, &f.train);
+                    let (x, y) = fit_rows(t, &f.train, p);
                     let valid = t.x.select(&f.test);
                     cps.push(fit_checkpoints(point, p.cfg, p.seed, &x, &y, &valid)?);
                 }
@@ -178,16 +195,20 @@ fn candidates(
     }
 }
 
-fn weighted_loss(c: &Cand, t: &Table, folds: &[InnerFold]) -> f64 {
+fn weighted_loss(c: &Cand, t: &Table, folds: &[InnerFold], direction: bool) -> f64 {
     let (mut s, mut n) = (0.0, 0.0);
     for (pr, f) in c.per_fold.iter().zip(folds) {
-        let y: Vec<usize> = f
-            .test
-            .iter()
-            .map(|&i| t.y.get(i).copied().unwrap_or(0))
-            .collect();
-        s += log_loss(pr, &y) * f.test.len() as f64;
-        n += f.test.len() as f64;
+        let (mut ps, mut y): (Probs, Vec<usize>) = (Vec::new(), Vec::new());
+        for (&i, row) in f.test.iter().zip(pr) {
+            let c = t.y.get(i).copied().unwrap_or(0);
+            if direction && c == 2 {
+                continue;
+            }
+            ps.push(*row);
+            y.push(c);
+        }
+        s += log_loss(&ps, &y) * y.len() as f64;
+        n += y.len() as f64;
     }
     s / n
 }
@@ -232,7 +253,7 @@ pub fn run_fold(
     let (best, best_loss) = cands
         .iter()
         .enumerate()
-        .map(|(i, c)| (i, weighted_loss(c, t, &folds)))
+        .map(|(i, c)| (i, weighted_loss(c, t, &folds, p.direction)))
         .filter(|(_, l)| l.is_finite())
         .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
         .ok_or_else(|| ModelError::Fit("no candidate has a finite inner loss".into()))?;
@@ -255,9 +276,13 @@ pub fn run_fold(
                 if s.t_end_us + p.embargo_us >= start && s.t_close_us <= end + p.embargo_us {
                     continue;
                 }
+                let class = t.y.get(ev).copied().unwrap_or(0);
+                if p.direction && class == 2 {
+                    continue;
+                }
                 if let Some(row) = chosen.per_fold.get(gi).and_then(|b| b.get(pos)) {
                     ps.push(*row);
-                    ys.push(t.y.get(ev).copied().unwrap_or(0));
+                    ys.push(class);
                 }
             }
         }
@@ -287,7 +312,7 @@ pub fn run_fold(
     );
 
     // 5: final fit, final calibrator, test predictions
-    let (x_train, y_train) = rows_of(t, train);
+    let (x_train, y_train) = fit_rows(t, train, p);
     let x_test = t.x.select(test);
     let stride = if p.cfg.contrib_rows_per_fold == 0 {
         usize::MAX
@@ -345,8 +370,12 @@ pub fn run_fold(
     let (mut all_p, mut all_y): (Probs, Vec<usize>) = (Vec::new(), Vec::new());
     for (f, b) in folds.iter().zip(&chosen.per_fold) {
         for (&ev, row) in f.test.iter().zip(b) {
+            let class = t.y.get(ev).copied().unwrap_or(0);
+            if p.direction && class == 2 {
+                continue;
+            }
             all_p.push(*row);
-            all_y.push(t.y.get(ev).copied().unwrap_or(0));
+            all_y.push(class);
         }
     }
     let final_cal = MultiCalibrator::fit(&all_p, &all_y, p.cfg);
@@ -452,6 +481,7 @@ mod tests {
             validation: v,
             embargo_us: 2 * HOUR,
             seed: child_seed(cfg.seed, "test"),
+            direction: false,
         };
         run_fold(family, &t, &train, &test, &p).unwrap()
     }
@@ -536,6 +566,72 @@ mod tests {
         }
     }
 
+    /// Like `synth`, but 30 percent of the events are chop (class 2) whatever the features say,
+    /// and the chop events carry a loud, useless feature 2 that a three class loss would chase.
+    fn synth_with_chop(n: usize, seed: u64) -> Synth {
+        let mut s = synth(n, seed, true);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed + 1000);
+        let mut rows = Vec::new();
+        for i in 0..n {
+            let chop = rng.random::<f64>() < 0.3;
+            if chop {
+                s.y[i] = 2;
+                s.net[i] = -3.0;
+            }
+            let mut r = s.x.row(i).to_vec();
+            r[2] = if chop {
+                5.0 + rng.random::<f64>()
+            } else {
+                rng.random::<f64>()
+            };
+            rows.push(r);
+        }
+        s.x = Matrix::from_rows(&rows);
+        s
+    }
+
+    #[test]
+    fn direction_mode_predicts_every_touch_and_ranks_the_resolved_ones() {
+        let (c, v) = setup();
+        let s = synth_with_chop(2400, 6);
+        let t = Table {
+            x: &s.x,
+            y: &s.y,
+            spans: &s.spans,
+            net: &s.net,
+            sessions: &s.sessions,
+        };
+        let n = s.y.len();
+        let train: Vec<usize> = (0..n * 3 / 4).collect();
+        let test: Vec<usize> = (n * 3 / 4..n).collect();
+        let p = Params {
+            cfg: &c,
+            validation: &v,
+            embargo_us: 2 * HOUR,
+            seed: child_seed(c.seed, "direction"),
+            direction: true,
+        };
+        let f = run_fold(Family::Logistic, &t, &train, &test, &p).unwrap();
+        // every test touch gets a probability, chop included
+        assert_eq!(f.calibrated.len(), test.len());
+        // no mass on the class that was never trained on
+        assert!(f.raw.iter().all(|r| r[2] < 1e-9));
+        for r in &f.calibrated {
+            assert!((r.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        }
+        // the base rates are those of the resolved training touches
+        assert!(f.base_freq[2] == 0.0);
+        // among the resolved test touches the rejection score ranks rejection above breakthrough
+        let (mut score, mut pos) = (Vec::new(), Vec::new());
+        for (row, &ev) in f.calibrated.iter().zip(&test) {
+            if s.y[ev] != 2 {
+                score.push(row[0]);
+                pos.push(s.y[ev] == 0);
+            }
+        }
+        assert!(crate::metrics::auc(&score, &pos) > 0.65);
+    }
+
     #[test]
     fn a_window_that_is_too_small_is_an_error_not_a_guess() {
         let (c, v) = setup();
@@ -552,6 +648,7 @@ mod tests {
             validation: &v,
             embargo_us: 2 * HOUR,
             seed: 1,
+            direction: false,
         };
         let train: Vec<usize> = (0..80).collect();
         let test: Vec<usize> = (80..100).collect();

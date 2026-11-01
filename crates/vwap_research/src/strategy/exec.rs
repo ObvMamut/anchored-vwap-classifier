@@ -74,9 +74,11 @@ fn sub_summary_path(env: &Env, sub: &str, id: &str, width: u32) -> PathBuf {
 fn registered_strategy(
     ledger: &Ledger,
     card_path: &Path,
+    labels: &LabelsConfig,
 ) -> Result<(StrategyCard, String), ResearchError> {
     let (card, hash) = load_strategy_card(card_path)?;
     card.validate(feature_names())?;
+    card.check_labels(labels)?;
     match ledger.registered_hash(&card.id)? {
         None => Err(ResearchError::NotRegistered { id: card.id }),
         Some(h) if h != hash => Err(ResearchError::CardChanged {
@@ -88,11 +90,12 @@ fn registered_strategy(
     }
 }
 
-fn configs<'a>(env: &'a Env) -> Configs<'a> {
+fn configs<'a>(env: &'a Env, card: &StrategyCard) -> Configs<'a> {
     Configs {
         strategy: env.strategy,
         validation: env.validation,
         backtest: env.backtest,
+        direction: card.direction(),
     }
 }
 
@@ -146,7 +149,7 @@ pub fn execute_strategy(
     samples: &[Sample],
 ) -> Result<Vec<StrategyRun>, ResearchError> {
     let ledger = Ledger::open(Path::new(&env.research.ledger_path));
-    let (card, hash) = registered_strategy(&ledger, card_path)?;
+    let (card, hash) = registered_strategy(&ledger, card_path, env.labels)?;
     let view = DiscoveryView::select(samples, &Bounds::from_config(env.research));
     if view.samples().len() < env.research.min_discovery_samples {
         return Err(ResearchError::NotEnoughData(format!(
@@ -182,7 +185,7 @@ pub fn execute_strategy(
             bars_for(env, width)?,
             env.one,
             &discovery_geometry(env, width),
-            &configs(env),
+            &configs(env, &card),
         )?;
         let own = Series {
             key: format!("{}_{width}m", card.id),
@@ -286,6 +289,7 @@ fn evaluate_segment(
             strategy: env.strategy,
             validation: &v,
             backtest: env.backtest,
+            direction: card.direction(),
         },
     )
 }
@@ -337,7 +341,7 @@ pub fn execute_strategy_confirm(
     samples: &[Sample],
 ) -> Result<SegmentRun, ResearchError> {
     let ledger = Ledger::open(Path::new(&env.research.ledger_path));
-    let (card, hash) = registered_strategy(&ledger, card_path)?;
+    let (card, hash) = registered_strategy(&ledger, card_path, env.labels)?;
     let permit = ledger.strategy_confirm_permit(&card.id, width)?;
     let promoted = (ledger.promoted_cards()?.len() + ledger.promoted_strategies()?.len()).max(1);
     let alpha = env.research.alpha_total / promoted as f64;
@@ -424,7 +428,7 @@ pub fn execute_strategy_holdout(
         ));
     }
     let card_path = Path::new(&env.research.cards_dir).join(format!("{card_id}.toml"));
-    let (card, hash) = registered_strategy(&ledger, &card_path)?;
+    let (card, hash) = registered_strategy(&ledger, &card_path, env.labels)?;
     let lock = Path::new(&env.research.ledger_path).parent().map_or_else(
         || Path::new("holdout.lock").to_path_buf(),
         |d| d.join("holdout.lock"),
@@ -542,9 +546,8 @@ pub fn json_close(
                     None => diffs.push(format!("{path}.{k}: missing")),
                 }
             }
-            for k in y.keys().filter(|k| !x.contains_key(*k)) {
-                diffs.push(format!("{path}.{k}: unexpected"));
-            }
+            // keys that only the fresh value has were added to the output after the run was
+            // recorded; every recorded number must still match
         }
         _ => {
             if a != b {
@@ -574,7 +577,7 @@ pub fn replay_strategy(
 ) -> Result<StrategyReplay, ResearchError> {
     const TOL: f64 = 1e-9;
     let ledger = Ledger::open(Path::new(&env.research.ledger_path));
-    let (card, _) = registered_strategy(&ledger, card_path)?;
+    let (card, _) = registered_strategy(&ledger, card_path, env.labels)?;
     let entry = ledger
         .read_all()?
         .into_iter()
@@ -618,7 +621,7 @@ pub fn replay_strategy(
         bars_for(env, width)?,
         env.one,
         &discovery_geometry(env, width),
-        &configs(env),
+        &configs(env, &card),
     )?;
     let stored: serde_json::Value = serde_json::from_str(&text)?;
     let fresh = serde_json::to_value(&result)?;

@@ -30,6 +30,8 @@ pub struct Configs<'a> {
     pub strategy: &'a StrategyConfig,
     pub validation: &'a ValidationConfig,
     pub backtest: &'a BacktestConfig,
+    /// Train, select and score on resolved touches (rejection against breakthrough) only.
+    pub direction: bool,
 }
 
 /// Where the test windows lie and how long the label horizon is.
@@ -102,6 +104,35 @@ pub struct ShapRow {
     pub phi: Vec<f64>,
 }
 
+/// In direction mode the three probabilities are renormalised over the two resolved classes; the
+/// chop probability is dropped.
+fn renorm(r: [f64; 3], direction: bool) -> [f64; 3] {
+    if !direction {
+        return r;
+    }
+    let s = r[0] + r[1];
+    if s > 0.0 {
+        [r[0] / s, r[1] / s, 0.0]
+    } else {
+        [0.5, 0.5, 0.0]
+    }
+}
+
+/// What the trades of a run won and what they needed to win, as in `benchmark.rs`.
+#[derive(Debug, Clone, Serialize)]
+pub struct TradeStats {
+    pub trades: usize,
+    /// Share of trades with a gross result above zero, and net of the configured costs.
+    pub win_rate: f64,
+    pub win_rate_net: f64,
+    pub mean_target_ticks: f64,
+    pub mean_stop_ticks: f64,
+    /// $(S + \kappa) / (T + S)$ for the mean target $T$ and stop $S$ of these trades.
+    pub breakeven_win_rate: f64,
+    /// `win_rate - breakeven_win_rate`; positive means an edge before the bootstrap interval.
+    pub edge: f64,
+}
+
 fn round6(x: f64) -> f64 {
     if x.is_finite() {
         (x * 1e6).round() / 1e6
@@ -119,6 +150,7 @@ pub struct StrategyResult {
     pub folds: Vec<FoldReport>,
     pub pooled: Option<Pooled>,
     pub backtest: Metrics,
+    pub trade_stats: TradeStats,
     pub expectancy_interval: (f64, f64),
     pub sweep: Vec<SweepCell>,
     pub break_even_slippage: f64,
@@ -258,6 +290,7 @@ pub fn evaluate(
             validation: cfg.validation,
             embargo_us,
             seed: child_seed(cfg.strategy.seed, &format!("{card_id}/{width}/{}", sp.fold)),
+            direction: cfg.direction,
         };
         if sp.test.is_empty() {
             rep.abstained = Some("no test events".into());
@@ -268,14 +301,24 @@ pub fn evaluate(
             Err(e) => rep.abstained = Some(e.to_string()),
             Ok(ff) => {
                 let y_test: Vec<usize> = sp.test.iter().map(|&i| y[i]).collect();
-                let base = vec![ff.base_freq; y_test.len()];
-                let (bs, bb) = (brier(&ff.calibrated, &y_test), brier(&base, &y_test));
+                // the rows the forecast is scored on: all of them, or the resolved ones
+                let scored: Vec<usize> = (0..sp.test.len())
+                    .filter(|&k| !cfg.direction || y_test[k] != 2)
+                    .collect();
+                let score_probs: Vec<[f64; 3]> = scored
+                    .iter()
+                    .map(|&k| renorm(ff.calibrated[k], cfg.direction))
+                    .collect();
+                let y_score: Vec<usize> = scored.iter().map(|&k| y_test[k]).collect();
+                let base_row = renorm(ff.base_freq, cfg.direction);
+                let base = vec![base_row; y_score.len()];
+                let (bs, bb) = (brier(&score_probs, &y_score), brier(&base, &y_score));
                 rep.selected = Some(ff.selected.clone());
                 rep.rounds = ff.rounds;
                 rep.candidates = ff.candidates;
                 candidates_scored += ff.candidates;
                 rep.tau = ff.tau.tau;
-                rep.log_loss = Some(log_loss(&ff.calibrated, &y_test));
+                rep.log_loss = Some(log_loss(&score_probs, &y_score));
                 rep.brier = Some(bs);
                 rep.brier_base = Some(bb);
                 rep.bss = Some(bss(bs, bb));
@@ -306,11 +349,15 @@ pub fn evaluate(
                         }
                     }
                 }
-                for (pos, &ev) in sp.test.iter().enumerate() {
-                    p_probs.push(ff.calibrated.get(pos).copied().unwrap_or([0.0; 3]));
+                for &pos in &scored {
+                    let ev = sp.test[pos];
+                    p_probs.push(renorm(
+                        ff.calibrated.get(pos).copied().unwrap_or([0.0; 3]),
+                        cfg.direction,
+                    ));
                     p_y.push(y[ev]);
                     p_sess.push(sessions[ev]);
-                    p_base.push(ff.base_freq);
+                    p_base.push(base_row);
                 }
                 if let Some(imp) = ff.importance {
                     fold_importance.push(imp);
@@ -426,6 +473,57 @@ pub fn evaluate(
             (!net_f.is_empty()).then(|| net_f.iter().sum::<f64>() / net_f.len() as f64);
     }
     let bt = metrics(&outcome.trades, &days, slip, comm, cfg.backtest);
+    let trade_stats = {
+        let by_event: std::collections::BTreeMap<u32, (f64, f64)> = signals
+            .iter()
+            .map(|g| {
+                (
+                    g.event_id,
+                    (
+                        (g.b_rej - g.close).abs() / vwap_core::TICK_SIZE,
+                        (g.b_brk - g.close).abs() / vwap_core::TICK_SIZE,
+                    ),
+                )
+            })
+            .collect();
+        let n = outcome.trades.len();
+        let frac = |f: &dyn Fn(&vwap_backtest::Trade) -> bool| {
+            if n == 0 {
+                f64::NAN
+            } else {
+                outcome.trades.iter().filter(|t| f(t)).count() as f64 / n as f64
+            }
+        };
+        let avg = |pick: &dyn Fn(&(f64, f64)) -> f64| {
+            if n == 0 {
+                f64::NAN
+            } else {
+                outcome
+                    .trades
+                    .iter()
+                    .filter_map(|t| by_event.get(&t.event_id))
+                    .map(pick)
+                    .sum::<f64>()
+                    / n as f64
+            }
+        };
+        let (target, stop) = (avg(&|x| x.0), avg(&|x| x.1));
+        let win_rate = frac(&|t| t.gross_ticks > 0.0);
+        let be = crate::strategy::benchmark::breakeven_win_rate(
+            cfg.backtest.round_trip_ticks(),
+            target,
+            stop,
+        );
+        TradeStats {
+            trades: n,
+            win_rate,
+            win_rate_net: frac(&|t| t.net_ticks(slip, comm) > 0.0),
+            mean_target_ticks: target,
+            mean_stop_ticks: stop,
+            breakeven_win_rate: be,
+            edge: win_rate - be,
+        }
+    };
     let ci = expectancy_interval(
         &outcome.trades,
         slip,
@@ -485,6 +583,7 @@ pub fn evaluate(
         folds,
         pooled,
         backtest: bt,
+        trade_stats,
         expectancy_interval: ci,
         sweep: sweep(&outcome.trades, cfg.backtest),
         break_even_slippage: break_even_slippage(&outcome.trades, comm),
@@ -555,9 +654,60 @@ mod tests {
                 strategy: &s.strategy,
                 validation: &s.validation,
                 backtest: &s.backtest,
+                direction: false,
             },
         )
         .unwrap()
+    }
+
+    fn run_direction(signal: bool, seed: u64) -> StrategyResult {
+        let s = setup();
+        let m = market(3600, signal, seed, s.geom.range.0, s.geom.range.1);
+        let idx: Vec<usize> = (0..feature_names().len()).collect();
+        evaluate(
+            "S901",
+            Family::Logistic,
+            15,
+            &idx,
+            &m.samples,
+            &m.bars,
+            &m.one,
+            &s.geom,
+            &Configs {
+                strategy: &s.strategy,
+                validation: &s.validation,
+                backtest: &s.backtest,
+                direction: true,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn the_direction_target_scores_the_resolved_touches_and_finds_the_same_signal() {
+        let r = run_direction(true, 8);
+        let p = r.pooled.as_ref().unwrap();
+        // scored on resolved touches only: about 90 percent of the events of the market
+        assert!(p.n_test < 3600 && p.n_test > 800);
+        assert!(p.bss > 0.1 && p.bss_interval.0 > 0.0, "{p:?}");
+        let t = &r.trade_stats;
+        assert!(t.trades > 100);
+        assert!(t.win_rate > t.breakeven_win_rate, "{t:?}");
+        assert!((t.edge - (t.win_rate - t.breakeven_win_rate)).abs() < 1e-12);
+        // noise has no edge: the win rate does not clear the break even rate
+        let n = run_direction(false, 9);
+        assert!(n.pooled.as_ref().unwrap().bss_interval.0 <= 0.0);
+    }
+
+    #[test]
+    fn trade_stats_state_the_break_even_rate_of_the_barriers_that_were_traded() {
+        let r = run_family(Family::Logistic, true, 1);
+        let t = &r.trade_stats;
+        // the synthetic market has symmetric barriers of 8 ticks
+        assert!((t.mean_target_ticks - 8.0).abs() < 1e-9 && (t.mean_stop_ticks - 8.0).abs() < 1e-9);
+        let be = 0.5 + 2.8 / 16.0;
+        assert!((t.breakeven_win_rate - be).abs() < 1e-9, "{t:?}");
+        assert_eq!(t.trades, r.backtest.n_trades);
     }
 
     #[test]
@@ -650,6 +800,7 @@ mod tests {
                 strategy: &s.strategy,
                 validation: &s.validation,
                 backtest: &s.backtest,
+                direction: false,
             },
         );
         assert!(r.is_err());

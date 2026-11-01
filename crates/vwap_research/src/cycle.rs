@@ -198,6 +198,7 @@ pub fn execute_diagnostic(
             name: format!("omnibus_decomposition_{t:?}"),
             git_commit: git_commit.to_string(),
             note,
+            trials_added: 0,
             time_utc: now(),
         })?;
         out.push(d);

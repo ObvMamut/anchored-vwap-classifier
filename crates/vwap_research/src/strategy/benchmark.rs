@@ -4,10 +4,12 @@
 //! and no alpha. It reads the discovery view only and uses the same folds and the same backtest
 //! as the strategies, so the numbers are comparable with theirs.
 //!
-//! For symmetric barriers of size $\sigma$ ticks and a round trip cost of $\kappa$ ticks, a trade
+//! For a target of $T$ ticks, a stop of $S$ ticks and a round trip cost of $\kappa$ ticks, a trade
 //! that always resolves needs a win rate of
-//! $$ p^{*} = \tfrac12 + \frac{\kappa}{2\sigma} $$
-//! to break even. Chop trades, which end at the horizon, make it an approximation.
+//! $$ p^{*} = \frac{S + \kappa}{T + S} $$
+//! to break even (for symmetric barriers $\tfrac12 + \kappa / 2T$). Chop trades, which end at the
+//! horizon, make it an approximation. A higher win rate bought with a smaller target raises
+//! $p^{*}$ by the same amount, so the edge to look at is the win rate minus $p^{*}$.
 
 use serde::Serialize;
 use vwap_backtest::{Signal, Trade, expectancy_interval, run};
@@ -19,9 +21,10 @@ use crate::error::ResearchError;
 use crate::split::{Bounds, DiscoveryView};
 use crate::strategy::exec::Env;
 
-/// Break even win rate for symmetric barriers of `sigma_ticks` and a round trip of `kappa_ticks`.
-pub fn breakeven_win_rate(kappa_ticks: f64, sigma_ticks: f64) -> f64 {
-    0.5 + kappa_ticks / (2.0 * sigma_ticks)
+/// Break even win rate for a target and a stop of `target_ticks` and `stop_ticks` and a round
+/// trip cost of `kappa_ticks`.
+pub fn breakeven_win_rate(kappa_ticks: f64, target_ticks: f64, stop_ticks: f64) -> f64 {
+    (stop_ticks + kappa_ticks) / (target_ticks + stop_ticks)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -39,9 +42,12 @@ pub struct Row {
     pub avg_gross_ticks: f64,
     pub avg_net_ticks: f64,
     pub profit_factor_net: f64,
-    /// Mean barrier distance in ticks.
-    pub mean_sigma_ticks: f64,
+    /// Mean target and stop distance in ticks.
+    pub mean_target_ticks: f64,
+    pub mean_stop_ticks: f64,
     pub breakeven_win_rate: f64,
+    /// `win_rate - breakeven_win_rate`.
+    pub edge: f64,
     pub target_share: f64,
     pub stop_share: f64,
     pub time_share: f64,
@@ -109,8 +115,10 @@ fn row(
         avg_gross_ticks: mean(trades.iter().map(|t| t.gross_ticks)),
         avg_net_ticks: mean(net.iter().copied()),
         profit_factor_net: if loss > 0.0 { gain / loss } else { f64::NAN },
-        mean_sigma_ticks: f64::NAN,
+        mean_target_ticks: f64::NAN,
+        mean_stop_ticks: f64::NAN,
         breakeven_win_rate: f64::NAN,
+        edge: f64::NAN,
         target_share: share(&|t| t.reason == vwap_backtest::ExitReason::Target),
         stop_share: share(&|t| t.reason == vwap_backtest::ExitReason::Stop),
         time_share: share(&|t| t.reason == vwap_backtest::ExitReason::Time),
@@ -122,14 +130,20 @@ impl Row {
     /// Fills the barrier size and the break even win rate from the touches the trades came from.
     fn with_sigma(mut self, trades: &[&Trade], touches: &[&Sample], kappa: f64) -> Self {
         let ids: std::collections::BTreeSet<u32> = trades.iter().map(|t| t.event_id).collect();
-        let sigma = mean(
-            touches
-                .iter()
-                .filter(|s| ids.contains(&s.event_id))
-                .map(|s| (s.b_rej - s.close).abs() / TICK_SIZE),
-        );
-        self.mean_sigma_ticks = sigma;
-        self.breakeven_win_rate = breakeven_win_rate(kappa, sigma);
+        let of = |f: &dyn Fn(&Sample) -> f64| {
+            mean(
+                touches
+                    .iter()
+                    .filter(|s| ids.contains(&s.event_id))
+                    .map(|s| f(s)),
+            )
+        };
+        let target = of(&|s| (s.b_rej - s.close).abs() / TICK_SIZE);
+        let stop = of(&|s| (s.b_brk - s.close).abs() / TICK_SIZE);
+        self.mean_target_ticks = target;
+        self.mean_stop_ticks = stop;
+        self.breakeven_win_rate = breakeven_win_rate(kappa, target, stop);
+        self.edge = self.win_rate - self.breakeven_win_rate;
         self
     }
 }
@@ -292,8 +306,11 @@ mod tests {
     #[test]
     fn the_break_even_rate_matches_a_hand_value() {
         // barriers of 40 ticks and a round trip of 2.8 ticks: 0.5 + 2.8 / 80
-        assert!((breakeven_win_rate(2.8, 40.0) - 0.535).abs() < 1e-12);
-        assert!((breakeven_win_rate(0.0, 40.0) - 0.5).abs() < 1e-12);
+        assert!((breakeven_win_rate(2.8, 40.0, 40.0) - 0.535).abs() < 1e-12);
+        assert!((breakeven_win_rate(0.0, 40.0, 40.0) - 0.5).abs() < 1e-12);
+        // a target of half the stop must win two trades in three just to break even
+        assert!((breakeven_win_rate(0.0, 20.0, 40.0) - 2.0 / 3.0).abs() < 1e-12);
+        assert!((breakeven_win_rate(2.0, 20.0, 40.0) - 42.0 / 60.0).abs() < 1e-12);
     }
 
     #[test]

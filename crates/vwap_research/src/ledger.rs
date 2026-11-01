@@ -140,11 +140,14 @@ pub enum Entry {
         failed: Vec<String>,
         time_utc: String,
     },
-    /// A descriptive analysis that spends no alpha and cannot promote anything.
+    /// A descriptive analysis that spends no alpha and cannot promote anything. A search over many
+    /// cells counts them as trials, because picking from them later would be a selection.
     Diagnostic {
         name: String,
         git_commit: String,
         note: String,
+        #[serde(default)]
+        trials_added: usize,
         time_utc: String,
     },
 }
@@ -224,7 +227,40 @@ impl Ledger {
             .iter()
             .filter(|e| matches!(e, Entry::Omnibus { .. }))
             .count();
-        Ok(omni.min(1) + self.cards_run()?.len() + self.strategies_run()?.len())
+        let searched: usize = entries
+            .iter()
+            .map(|e| match e {
+                Entry::Diagnostic { trials_added, .. } => *trials_added,
+                _ => 0,
+            })
+            .sum();
+        Ok(omni.min(1) + self.cards_run()?.len() + self.strategies_run()?.len() + searched)
+    }
+
+    /// Records a search over `cells` cells as a diagnostic that adds `cells` trials, once per
+    /// name. Returns false (and writes nothing) when `name` is already in the ledger.
+    pub fn record_search(
+        &self,
+        name: &str,
+        cells: usize,
+        note: &str,
+        git_commit: &str,
+    ) -> Result<bool, ResearchError> {
+        let seen = self
+            .read_all()?
+            .iter()
+            .any(|e| matches!(e, Entry::Diagnostic { name: n, .. } if n == name));
+        if seen {
+            return Ok(false);
+        }
+        self.append(&Entry::Diagnostic {
+            name: name.to_string(),
+            git_commit: git_commit.to_string(),
+            note: note.to_string(),
+            trials_added: cells,
+            time_utc: chrono::Utc::now().to_rfc3339(),
+        })?;
+        Ok(true)
     }
 
     /// Cards whose last discovery verdict is PROMOTE.
@@ -378,6 +414,33 @@ impl Ledger {
         Ok(ConfirmPermit {
             card_id: card_id.to_string(),
         })
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    #[test]
+    fn a_search_adds_its_cells_to_the_trial_count_once() {
+        let dir = std::env::temp_dir().join(format!("vwap_search_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let l = Ledger::open(&dir.join("ledger.jsonl"));
+        assert_eq!(l.trials().unwrap(), 0);
+        assert!(l.record_search("grid", 96, "label grid", "abc").unwrap());
+        assert_eq!(l.trials().unwrap(), 96);
+        assert!(!l.record_search("grid", 96, "label grid", "abc").unwrap());
+        assert_eq!(l.trials().unwrap(), 96);
+        // an old diagnostic line without the field counts for nothing
+        let old = r#"{"kind":"diagnostic","name":"x","git_commit":"c","note":"n","time_utc":"t"}"#;
+        let e: Entry = serde_json::from_str(old).unwrap();
+        assert!(matches!(
+            e,
+            Entry::Diagnostic {
+                trials_added: 0,
+                ..
+            }
+        ));
     }
 }
 

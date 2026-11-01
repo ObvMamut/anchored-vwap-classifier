@@ -4186,6 +4186,7 @@ dependencies = [
  "chrono",
  "clap",
  "polars",
+ "serde",
  "serde_json",
  "toml",
  "vwap_baselines",
