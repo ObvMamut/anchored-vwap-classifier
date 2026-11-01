@@ -857,6 +857,30 @@ mod tests {
 
             let v = verify(&w.research).unwrap();
             assert!(v.problems.is_empty(), "{:?}", v.problems);
+
+            // the summary names every strategy, the promotion, the confirmation and the holdout
+            let md = crate::strategy::summary::build(&w.research).unwrap();
+            assert!(md.contains("| S004 | 15m |"), "{md}");
+            assert!(
+                md.contains("PROMOTE") && md.contains("Gates that failed"),
+                "{md}"
+            );
+            assert!(
+                md.contains("Confirmation of S004 on 15m: CONFIRMED"),
+                "{md}"
+            );
+            assert!(md.contains("Holdout of S004 on 15m: CONFIRMED"), "{md}");
+            assert!(!md.contains('\u{2014}') && !md.contains('\u{2013}'));
+            // the tracked summary feeds the plots
+            let text =
+                fs::read_to_string(Path::new(&w.research.strategies_dir).join("S004_15m.json"))
+                    .unwrap();
+            let pi = crate::strategy::summary::PlotInputs::from_summary(
+                &serde_json::from_str(&text).unwrap(),
+            );
+            assert_eq!(pi.reliability.len(), 3);
+            assert!(!pi.daily_pnl.is_empty() && !pi.shap_phi.is_empty());
+            assert_eq!(pi.feature_names.len(), feature_names().len());
         });
     }
 

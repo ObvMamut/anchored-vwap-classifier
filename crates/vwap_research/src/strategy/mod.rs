@@ -5,6 +5,7 @@ pub mod card;
 pub mod eval;
 pub mod exec;
 pub mod gates;
+pub mod summary;
 
 pub use card::{ModelKind, StrategyCard, card_file_hash, is_strategy_text, load_strategy_card};
 pub use eval::{Configs, FoldReport, Geometry, Pooled, StrategyResult, evaluate};

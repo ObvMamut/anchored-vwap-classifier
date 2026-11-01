@@ -119,6 +119,8 @@ pub struct StrategyConfig {
     /// A fold abstains unless the best threshold has a bootstrap lower bound above zero on the
     /// out of fold data. Without it a useless model still trades at its least bad threshold.
     pub tau_require_positive_lcb: bool,
+    /// Rows per fold whose feature values and rejection contributions are kept for the beeswarm.
+    pub contrib_rows_per_fold: usize,
     pub lgbm_grid: Vec<LgbmPoint>,
 }
 
@@ -264,6 +266,34 @@ pub fn round_trip_ticks(slippage_ticks: f64, commission_usd: f64) -> f64 {
 
 pub fn load_backtest_config(dir: &Path) -> Result<BacktestConfig, CoreError> {
     let cfg: BacktestConfig = read_toml(dir, "backtest.toml")?;
+    cfg.validate()?;
+    Ok(cfg)
+}
+
+/// `report.toml`: where the report goes and how the plots look.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReportConfig {
+    pub output_dir: String,
+    pub plot_width: u32,
+    pub plot_height: u32,
+    /// Features shown in the importance bars and the beeswarm.
+    pub top_features: usize,
+}
+
+impl ReportConfig {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        if self.plot_width < 200 || self.plot_height < 200 || self.top_features == 0 {
+            return Err(CoreError::ConfigInvalid(
+                "report.toml: plots need at least 200 by 200 pixels and one feature".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub fn load_report_config(dir: &Path) -> Result<ReportConfig, CoreError> {
+    let cfg: ReportConfig = read_toml(dir, "report.toml")?;
     cfg.validate()?;
     Ok(cfg)
 }

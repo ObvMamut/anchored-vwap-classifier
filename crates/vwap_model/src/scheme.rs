@@ -47,6 +47,14 @@ pub struct Params<'a> {
     pub seed: u64,
 }
 
+/// One test event for the beeswarm: its feature values and the contribution of each feature to
+/// the rejection score.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContribRow {
+    pub values: Vec<f64>,
+    pub phi: Vec<f64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct FoldFit {
     /// Probabilities on the test events before and after calibration.
@@ -64,6 +72,9 @@ pub struct FoldFit {
     pub base_freq: [f64; 3],
     /// Mean absolute contribution per feature and class on the test events, when the model has one.
     pub importance: Option<Vec<[f64; 3]>>,
+    /// A thin sample of test events: feature values and rejection contributions, for the
+    /// beeswarm. At most `contrib_rows_per_fold` rows.
+    pub contrib_sample: Vec<ContribRow>,
     pub n_train: usize,
 }
 
@@ -278,6 +289,12 @@ pub fn run_fold(
     // 5: final fit, final calibrator, test predictions
     let (x_train, y_train) = rows_of(t, train);
     let x_test = t.x.select(test);
+    let stride = if p.cfg.contrib_rows_per_fold == 0 {
+        usize::MAX
+    } else {
+        x_test.n.div_ceil(p.cfg.contrib_rows_per_fold).max(1)
+    };
+    let mut contrib_sample: Vec<ContribRow> = Vec::new();
     let (raw, importance) = match family {
         Family::Majority => {
             let mut m = Majority::new();
@@ -287,6 +304,13 @@ pub fn run_fold(
         Family::Logistic => {
             let mut m = Logistic::new(chosen.alpha.unwrap_or(1.0), p.cfg);
             m.fit(&x_train, &y_train)?;
+            let (rows, _) = m.contributions(&x_test)?;
+            for (i, r) in rows.iter().enumerate().filter(|(i, _)| i % stride == 0) {
+                contrib_sample.push(ContribRow {
+                    values: x_test.row(i).to_vec(),
+                    phi: r.iter().map(|c| c[0]).collect(),
+                });
+            }
             (m.predict_proba(&x_test)?, Some(m.importance(&x_test)?))
         }
         Family::Lgbm => {
@@ -307,6 +331,12 @@ pub fn run_fold(
                         *c += phi.get(k * w + f).copied().unwrap_or(0.0).abs()
                             / x_test.n.max(1) as f64;
                     }
+                }
+                if i % stride == 0 {
+                    contrib_sample.push(ContribRow {
+                        values: x_test.row(i).to_vec(),
+                        phi: phi.iter().take(tm.n_features()).copied().collect(),
+                    });
                 }
             }
             (raw, Some(imp))
@@ -339,6 +369,7 @@ pub fn run_fold(
         candidates: n_cands,
         base_freq: base.map(|c| c / n_tr),
         importance,
+        contrib_sample,
         n_train: train.len(),
     })
 }
@@ -472,6 +503,13 @@ mod tests {
         let s = synth(3000, 3, true);
         let f = run(Family::Lgbm, &s, &c, &v);
         assert!(f.tau.tau.is_some(), "no threshold");
+        assert!(!f.contrib_sample.is_empty());
+        assert!(f.contrib_sample.len() <= c.contrib_rows_per_fold);
+        assert!(
+            f.contrib_sample
+                .iter()
+                .all(|r| r.phi.len() == r.values.len())
+        );
         let imp = f.importance.unwrap();
         // feature 0 carries the signal, feature 1 is independent noise
         assert!(imp[0][0] > imp[1][0]);

@@ -2,6 +2,7 @@
 
 mod ctx;
 mod ops;
+mod report;
 mod research;
 mod stages;
 
@@ -43,6 +44,11 @@ enum Command {
     Features {
         #[command(subcommand)]
         stage: FeaturesStage,
+    },
+    /// The Markdown summary and the plots of the research record.
+    Report {
+        #[command(subcommand)]
+        stage: ReportStage,
     },
     /// Render the random day charts for the visual check.
     Spotcheck { config: PathBuf },
@@ -93,6 +99,12 @@ enum LabelsStage {
 #[derive(Subcommand)]
 enum FeaturesStage {
     /// Write features_<w>m.parquet for every timeframe.
+    Build { config: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum ReportStage {
+    /// Write reports/summary.md and the strategy plots.
     Build { config: PathBuf },
 }
 
@@ -151,6 +163,9 @@ fn run() -> Result<()> {
         Command::Features {
             stage: FeaturesStage::Build { config },
         } => stages::features_build(&config)?,
+        Command::Report {
+            stage: ReportStage::Build { config },
+        } => report::build(&config)?,
         Command::Baselines {
             stage: BaselinesStage::Run { config },
         } => stages::baselines_run(&config)?,

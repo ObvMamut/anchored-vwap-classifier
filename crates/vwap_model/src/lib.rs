@@ -25,6 +25,6 @@ pub use lgbm::{Lgbm, fit_checkpoints};
 pub use matrix::{Matrix, Probs};
 pub use metrics::{Bin, auc, brier, bss, ece, log_loss, precision_at, reliability};
 pub use prep::Preprocessor;
-pub use scheme::{Family, FoldFit, Params, Table, child_seed, run_fold};
+pub use scheme::{ContribRow, Family, FoldFit, Params, Table, child_seed, run_fold};
 pub use shap::TreeModel;
 pub use threshold::{TauChoice, TauRow, tune_tau};

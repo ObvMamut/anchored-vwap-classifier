@@ -19,7 +19,7 @@ use vwap_events::CoarseBars;
 use vwap_features::feature_names;
 use vwap_model::{
     Family, Matrix, Params, Table, auc, brier, bss, child_seed, ece, log_loss, precision_at,
-    run_fold, stability,
+    reliability as reliability_bins, run_fold, stability,
 };
 use vwap_validation::{EventSpan, Mode, WalkForwardConfig, cluster_draws, interval, walk_forward};
 
@@ -88,6 +88,29 @@ pub struct ImportanceRow {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ReliabilityBin {
+    pub n: usize,
+    pub mean_pred: f64,
+    pub freq: f64,
+}
+
+/// One event of the beeswarm sample: feature values and the contribution of each feature to the
+/// rejection score, rounded to 6 decimals.
+#[derive(Debug, Clone, Serialize)]
+pub struct ShapRow {
+    pub values: Vec<f64>,
+    pub phi: Vec<f64>,
+}
+
+fn round6(x: f64) -> f64 {
+    if x.is_finite() {
+        (x * 1e6).round() / 1e6
+    } else {
+        x
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct StrategyResult {
     pub card_id: String,
     pub width: u32,
@@ -105,7 +128,16 @@ pub struct StrategyResult {
     /// Net USD per evaluated day at the configured costs; feeds the DSR and the PBO.
     pub daily_pnl: Vec<f64>,
     pub importance: Vec<ImportanceRow>,
+    /// Per fold with a contribution: importance of each selected feature summed over classes.
+    pub importance_by_fold: Vec<Vec<f64>>,
     pub importance_stability: Option<(f64, f64)>,
+    /// Pooled reliability bins per class (rejection, breakthrough, chop).
+    pub reliability: Vec<Vec<ReliabilityBin>>,
+    /// Index into `daily_pnl` where each fold's test window begins.
+    pub fold_first_day: Vec<usize>,
+    /// Names of the selected features, in the column order of `shap_sample`.
+    pub feature_names: Vec<String>,
+    pub shap_sample: Vec<ShapRow>,
     /// Candidates scored by the inner folds over all folds, counted as trials of the family.
     pub candidates_scored: usize,
 }
@@ -196,6 +228,7 @@ pub fn evaluate(
     let (mut p_probs, mut p_y, mut p_sess, mut p_base) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut fold_importance: Vec<Vec<[f64; 3]>> = Vec::new();
+    let mut shap_sample: Vec<ShapRow> = Vec::new();
     let mut candidates_scored = 0usize;
     for sp in &splits {
         let mut rep = FoldReport {
@@ -282,6 +315,10 @@ pub fn evaluate(
                 if let Some(imp) = ff.importance {
                     fold_importance.push(imp);
                 }
+                shap_sample.extend(ff.contrib_sample.into_iter().map(|r| ShapRow {
+                    values: r.values.into_iter().map(round6).collect(),
+                    phi: r.phi.into_iter().map(round6).collect(),
+                }));
             }
         }
         folds.push(rep);
@@ -354,6 +391,28 @@ pub fn evaluate(
     }
     days.sort_unstable();
     days.dedup();
+    let fold_first_day: Vec<usize> = splits
+        .iter()
+        .map(|sp| {
+            let first = sessions_in(bars, sp.test_start_us, sp.test_end_us)
+                .first()
+                .copied()
+                .unwrap_or(i32::MAX);
+            days.partition_point(|&d| d < first)
+        })
+        .collect();
+    let reliability: Vec<Vec<ReliabilityBin>> = (0..3)
+        .map(|k| {
+            reliability_bins(&p_probs, &p_y, k, cfg.strategy.ece_bins)
+                .into_iter()
+                .map(|b| ReliabilityBin {
+                    n: b.n,
+                    mean_pred: b.mean_pred,
+                    freq: b.freq,
+                })
+                .collect()
+        })
+        .collect();
     let (slip, comm) = (cfg.backtest.slippage_ticks, cfg.backtest.commission_usd);
     for rep in &mut folds {
         let net_f: Vec<f64> = outcome
@@ -388,6 +447,10 @@ pub fn evaluate(
         .collect();
     let mut importance = Vec::new();
     let mut stab = None;
+    let importance_by_fold: Vec<Vec<f64>> = fold_importance
+        .iter()
+        .map(|f| f.iter().map(|c| c.iter().sum()).collect())
+        .collect();
     if !fold_importance.is_empty() {
         let nf = fold_importance.len() as f64;
         for (j, name) in kept.iter().enumerate() {
@@ -429,7 +492,12 @@ pub fn evaluate(
         skipped_busy: outcome.skipped_busy,
         daily_pnl: daily_pnl(&outcome.trades, &days, slip, comm),
         importance,
+        importance_by_fold,
         importance_stability: stab,
+        reliability,
+        fold_first_day,
+        feature_names: kept.iter().map(|k| (*k).to_string()).collect(),
+        shap_sample,
         candidates_scored,
     })
 }
@@ -517,6 +585,28 @@ mod tests {
             .max_by(|a, b| a.per_class[0].total_cmp(&b.per_class[0]))
             .unwrap();
         assert_eq!(top.feature, feature_names()[0]);
+
+        // what the report needs is stored
+        assert_eq!(r.reliability.len(), 3);
+        assert!(
+            r.reliability
+                .iter()
+                .all(|c| c.len() == setup().strategy.ece_bins)
+        );
+        assert_eq!(
+            r.reliability[0].iter().map(|b| b.n).sum::<usize>(),
+            p.n_test
+        );
+        assert_eq!(r.fold_first_day.len(), r.folds.len());
+        assert!(r.fold_first_day.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(r.importance_by_fold.len(), r.folds.len());
+        assert!(!r.shap_sample.is_empty());
+        assert!(r.shap_sample.len() <= r.folds.len() * setup().strategy.contrib_rows_per_fold);
+        assert!(
+            r.shap_sample
+                .iter()
+                .all(|row| row.phi.len() == r.feature_names.len())
+        );
     }
 
     #[test]

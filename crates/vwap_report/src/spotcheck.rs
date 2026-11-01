@@ -9,7 +9,6 @@ use std::path::Path;
 
 use chrono::{NaiveDate, TimeDelta};
 use plotters::prelude::*;
-use plotters::style::{FontStyle, register_font};
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
@@ -93,21 +92,7 @@ pub fn spotcheck(
         path: dir.display().to_string(),
         source,
     })?;
-    // The first candidate that can be read and registered is used. Without a font the chart text
-    // cannot be drawn, so that is an error and not a silent blank chart.
-    let mut registered = false;
-    for path in font_paths {
-        if let Ok(bytes) = fs::read(path) {
-            let leaked: &'static [u8] = Box::leak(bytes.into_boxed_slice());
-            if register_font("sans-serif", FontStyle::Normal, leaked).is_ok() {
-                registered = true;
-                break;
-            }
-        }
-    }
-    if !registered {
-        return Err(ReportError::NoFont(font_paths.join(", ")));
-    }
+    crate::plots::register_fonts(font_paths)?;
     let mut out = Vec::new();
     for &s in sessions {
         let r = session_range(bars, s);

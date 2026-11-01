@@ -90,9 +90,10 @@ fn checks(config: &Path) -> Vec<Check> {
         vwap_core::load_validation_config(config).map(|_| ()),
         vwap_core::load_strategy_config(config).map(|_| ()),
         vwap_core::load_backtest_config(config).map(|_| ()),
+        vwap_core::load_report_config(config).map(|_| ()),
     ];
     match loaded.iter().find_map(|r| r.as_ref().err()) {
-        None => c.push(ok("all 10 configuration files load and validate")),
+        None => c.push(ok("all 11 configuration files load and validate")),
         Some(e) => c.push(fail(format!("configuration: {e}"))),
     }
 
