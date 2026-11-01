@@ -188,6 +188,15 @@ mod tests {
     }
 
     #[test]
+    fn the_backtest_file_loads_and_the_round_trip_cost_is_2_8_ticks() {
+        let b = load_backtest_config(dir()).unwrap();
+        assert!((b.round_trip_ticks() - 2.8).abs() < 1e-12);
+        let mut low = b.clone();
+        low.slippage_ticks = 0.5;
+        assert!(low.validate().is_err());
+    }
+
+    #[test]
     fn an_embargo_below_one_horizon_is_rejected() {
         let mut v = load_validation_config(dir()).unwrap();
         v.embargo_horizons = 0.5;
@@ -196,4 +205,62 @@ mod tests {
         v.pbo_blocks = 15;
         assert!(v.validate().is_err());
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PositionPolicy {
+    OneAtATime,
+    OnePerSession,
+    Overlap,
+}
+
+/// `backtest.toml`: fills, costs and the position policy (`docs/BACKTEST.md`).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BacktestConfig {
+    /// Adverse slippage per side, in ticks. Headline runs need at least 1.
+    pub slippage_ticks: f64,
+    /// Commission and fees per side, in USD.
+    pub commission_usd: f64,
+    pub position_policy: PositionPolicy,
+    /// Slippage and commission levels of the cost sweep.
+    pub sweep_slippage: Vec<f64>,
+    pub sweep_commission: Vec<f64>,
+    /// Trading days per year, used only to annualise the Sharpe ratio.
+    pub trading_days_per_year: f64,
+}
+
+impl BacktestConfig {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        let bad = self.slippage_ticks < 1.0
+            || self.commission_usd < 0.0
+            || self.sweep_slippage.is_empty()
+            || self.sweep_commission.is_empty()
+            || self.sweep_slippage.iter().any(|&s| s < 0.0)
+            || self.sweep_commission.iter().any(|&c| c < 0.0)
+            || self.trading_days_per_year <= 0.0;
+        if bad {
+            return Err(CoreError::ConfigInvalid(
+                "backtest.toml: slippage must be at least 1 tick per side, costs and sweep levels non negative".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Round trip cost in ticks, $\kappa = 2 n_{slip} + 2 c / v$ with $v$ the tick value.
+    pub fn round_trip_ticks(&self) -> f64 {
+        round_trip_ticks(self.slippage_ticks, self.commission_usd)
+    }
+}
+
+/// $\kappa = 2 n_{slip} + 2 c_{usd} / v_{tick}$ in ticks.
+pub fn round_trip_ticks(slippage_ticks: f64, commission_usd: f64) -> f64 {
+    2.0 * slippage_ticks + 2.0 * commission_usd / crate::consts::TICK_VALUE_USD
+}
+
+pub fn load_backtest_config(dir: &Path) -> Result<BacktestConfig, CoreError> {
+    let cfg: BacktestConfig = read_toml(dir, "backtest.toml")?;
+    cfg.validate()?;
+    Ok(cfg)
 }

@@ -67,6 +67,86 @@ fn hits(side: i8, high: f64, low: f64, b_rej: f64, b_brk: f64) -> (bool, bool) {
     }
 }
 
+/// Which barrier a scan hit first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hit {
+    Rejection,
+    Breakthrough,
+    /// Both barriers inside one 1 minute bar, or no 1 minute data to decide: unresolved.
+    Ambiguous,
+    /// Neither barrier within the horizon.
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Scan {
+    pub hit: Hit,
+    /// Bars after the touch bar at which the scan stopped (the horizon when nothing was hit).
+    pub resolved_at: usize,
+    /// Maximum adverse excursion from `p0` up to the stop, in price units.
+    pub adverse: f64,
+}
+
+/// Scans the coarse bars `t + 1 ..= t + horizon` for the first barrier. A bar that touches both
+/// barriers is replayed on the 1 minute bars and the first minute that touches a barrier
+/// decides; a minute that touches both leaves the result ambiguous. `side` is +1 when price came
+/// from above. The label stage and the backtest both use this one implementation.
+#[allow(clippy::too_many_arguments)]
+pub fn scan_barriers(
+    bars: &CoarseBars,
+    one: &CleanBars,
+    t: usize,
+    horizon: usize,
+    side: i8,
+    p0: f64,
+    b_rej: f64,
+    b_brk: f64,
+) -> Scan {
+    let s = f64::from(side);
+    let w_us = i64::from(bars.width) * MIN_US;
+    let mut hit = Hit::None;
+    let mut resolved_at = horizon;
+    let mut adverse = 0.0f64;
+    for j in 1..=horizon {
+        let u = t + j;
+        let x = if side > 0 { bars.low[u] } else { bars.high[u] };
+        adverse = adverse.max(s * (p0 - x));
+        let (hr, hb) = hits(side, bars.high[u], bars.low[u], b_rej, b_brk);
+        if !hr && !hb {
+            continue;
+        }
+        resolved_at = j;
+        if hr && !hb {
+            hit = Hit::Rejection;
+        } else if hb && !hr {
+            hit = Hit::Breakthrough;
+        } else {
+            let r = minute_range(one, bars.open_us[u], bars.open_us[u] + w_us);
+            hit = Hit::Ambiguous;
+            for k in r {
+                let (mr, mb) = hits(side, one.high[k], one.low[k], b_rej, b_brk);
+                if mr && mb {
+                    break;
+                }
+                if mr || mb {
+                    hit = if mr {
+                        Hit::Rejection
+                    } else {
+                        Hit::Breakthrough
+                    };
+                    break;
+                }
+            }
+        }
+        break;
+    }
+    Scan {
+        hit,
+        resolved_at,
+        adverse,
+    }
+}
+
 pub fn label_events(
     events: &[Event],
     bars: &CoarseBars,
@@ -106,54 +186,16 @@ pub fn label_events(
         let sigma = e.atr;
         let b_rej = p0 + s * p.m1 * sigma;
         let b_brk = p0 - s * p.m2 * sigma;
-        let mut class: Option<Class> = None;
-        let mut ambiguous = false;
-        let mut resolved_at = p.horizon;
-        let mut adverse = 0.0f64;
-        for j in 1..=p.horizon {
-            let u = t + j;
-            let x = if e.side > 0 {
-                bars.low[u]
-            } else {
-                bars.high[u]
-            };
-            adverse = adverse.max(s * (p0 - x));
-            let (hr, hb) = hits(e.side, bars.high[u], bars.low[u], b_rej, b_brk);
-            if !hr && !hb {
-                continue;
-            }
-            resolved_at = j;
-            if hr && !hb {
-                class = Some(Class::Rejection);
-            } else if hb && !hr {
-                class = Some(Class::Breakthrough);
-            } else {
-                let r = minute_range(one, bars.open_us[u], bars.open_us[u] + w_us);
-                let mut decided = false;
-                for k in r {
-                    let (mr, mb) = hits(e.side, one.high[k], one.low[k], b_rej, b_brk);
-                    if mr && mb {
-                        break;
-                    }
-                    if mr || mb {
-                        class = Some(if mr {
-                            Class::Rejection
-                        } else {
-                            Class::Breakthrough
-                        });
-                        decided = true;
-                        break;
-                    }
-                }
-                if !decided {
-                    ambiguous = true;
-                }
-            }
-            break;
-        }
-        if class.is_none() && !ambiguous {
-            class = Some(Class::Chop);
-        }
+        let scan = scan_barriers(bars, one, t, p.horizon, e.side, p0, b_rej, b_brk);
+        let ambiguous = scan.hit == Hit::Ambiguous;
+        let resolved_at = scan.resolved_at;
+        let adverse = scan.adverse;
+        let class = match scan.hit {
+            Hit::Rejection => Some(Class::Rejection),
+            Hit::Breakthrough => Some(Class::Breakthrough),
+            Hit::Ambiguous => None,
+            Hit::None => Some(Class::Chop),
+        };
         if ambiguous {
             drops.ambiguous += 1;
         }

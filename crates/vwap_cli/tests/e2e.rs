@@ -173,6 +173,7 @@ fn sandbox(name: &str) -> Sandbox {
         "features.toml",
         "model.toml",
         "validation.toml",
+        "backtest.toml",
         "strategy.toml",
     ] {
         fs::copy(repo_cfg.join(f), dir.join("config").join(f)).unwrap();

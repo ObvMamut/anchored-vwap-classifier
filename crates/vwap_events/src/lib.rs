@@ -7,6 +7,7 @@
 pub mod bars;
 pub mod detect;
 pub mod error;
+pub mod fixture;
 pub mod io;
 pub mod level;
 

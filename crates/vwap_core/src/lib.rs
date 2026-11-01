@@ -20,7 +20,7 @@ pub use config::{
 pub use consts::{POINT_VALUE_USD, TICK_SIZE, TICK_VALUE_USD};
 pub use error::CoreError;
 pub use strategy_config::{
-    LgbmPoint, StrategyConfig, ValidationConfig, WalkMode, load_strategy_config,
-    load_validation_config,
+    BacktestConfig, LgbmPoint, PositionPolicy, StrategyConfig, ValidationConfig, WalkMode,
+    load_backtest_config, load_strategy_config, load_validation_config, round_trip_ticks,
 };
 pub use types::{Class, Side, Timeframe};

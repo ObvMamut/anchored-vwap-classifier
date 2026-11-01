@@ -8,4 +8,4 @@ pub mod io;
 pub mod label;
 
 pub use io::{LabelIoError, LabelReport, write_labels};
-pub use label::{LabelDrops, LabelParams, Labeled, label_events};
+pub use label::{Hit, LabelDrops, LabelParams, Labeled, Scan, label_events, scan_barriers};

@@ -4116,6 +4116,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
 
 [[package]]
+name = "vwap_backtest"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "rand 0.9.5",
+ "rand_chacha 0.9.0",
+ "serde",
+ "vwap_core",
+ "vwap_data",
+ "vwap_events",
+ "vwap_labels",
+ "vwap_validation",
+]
+
+[[package]]
 name = "vwap_baselines"
 version = "0.1.0"
 dependencies = [
