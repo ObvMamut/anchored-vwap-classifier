@@ -1,0 +1,9 @@
+id = "S008"
+kind = "strategy"
+mechanism = "Barrier shape trial. Default barriers with the time horizon doubled. Logistic regression on resolved touches only, calibrated, with a threshold tuned on out of fold data that must allow at least 4 trades per week on average. One of four barrier cells fixed before any grid output was read."
+model = "logistic"
+target = "direction"
+min_trades_per_week = 4.0
+timeframes = [5, 15]
+horizon_5m = 24
+horizon_15m = 16
