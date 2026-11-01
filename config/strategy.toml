@@ -8,6 +8,7 @@ winsor_upper = 0.99
 logistic_l2_grid = [0.1, 1.0, 10.0]
 logistic_max_iterations = 100
 lgbm_max_rounds = 300
+lgbm_round_step = 10
 min_train_events = 300
 tau_min = 0.35
 tau_max = 0.80

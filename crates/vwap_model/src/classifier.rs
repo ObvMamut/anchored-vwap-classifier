@@ -84,6 +84,9 @@ struct LogisticState {
     present: Vec<usize>,
 }
 
+/// Contributions per row and feature, and the intercepts.
+pub type Contributions = (Vec<Vec<[f64; 3]>>, [f64; 3]);
+
 impl Logistic {
     pub fn new(alpha: f64, cfg: &StrategyConfig) -> Self {
         Self {
@@ -97,6 +100,56 @@ impl Logistic {
 
 fn to_array(x: &Matrix) -> Result<Array2<f64>, ModelError> {
     Array2::from_shape_vec((x.n, x.p), x.data.clone()).map_err(|e| ModelError::Shape(e.to_string()))
+}
+
+impl Logistic {
+    /// Per feature and class contributions to the logit on the standardised inputs, row by row:
+    /// `out[i][f][k] = coefficient(f, k) * z_{i,f}`. Missing indicator columns are not features and
+    /// are left out; the intercept is returned separately. Exact in logit space.
+    pub fn contributions(&self, x: &Matrix) -> Result<Contributions, ModelError> {
+        let st = self.state.as_ref().ok_or(ModelError::NotFit)?;
+        let z = st.prep.transform(x);
+        let coef = st.model.params();
+        let mut intercept = [0.0; 3];
+        for (col, &k) in st.present.iter().enumerate() {
+            if let (Some(o), Some(v)) = (intercept.get_mut(k), st.model.intercept().get(col)) {
+                *o = *v;
+            }
+        }
+        let rows = (0..x.n)
+            .map(|i| {
+                (0..x.p)
+                    .map(|f| {
+                        let mut c = [0.0; 3];
+                        for (col, &k) in st.present.iter().enumerate() {
+                            if let (Some(o), Some(b)) = (c.get_mut(k), coef.get((f, col))) {
+                                *o = b * z.get(i, f);
+                            }
+                        }
+                        c
+                    })
+                    .collect()
+            })
+            .collect();
+        Ok((rows, intercept))
+    }
+
+    /// Mean absolute contribution per feature and class over the rows of `x`.
+    pub fn importance(&self, x: &Matrix) -> Result<Vec<[f64; 3]>, ModelError> {
+        let (rows, _) = self.contributions(x)?;
+        let n = rows.len().max(1) as f64;
+        let mut out = vec![[0.0; 3]; x.p];
+        for r in &rows {
+            for (o, c) in out.iter_mut().zip(r) {
+                for k in 0..3 {
+                    if let (Some(a), Some(b)) = (o.get_mut(k), c.get(k)) {
+                        *a += b.abs() / n;
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
 }
 
 impl Classifier for Logistic {
@@ -260,5 +313,65 @@ mod tests {
     fn shape_errors_are_reported() {
         let mut m = Majority::new();
         assert!(m.fit(&Matrix::from_rows(&[vec![0.0]]), &[0, 1]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod explain_tests {
+    use super::*;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
+
+    #[test]
+    fn contributions_plus_intercept_reproduce_the_predicted_probabilities() {
+        let cfg = vwap_core::load_strategy_config(std::path::Path::new("../../config")).unwrap();
+        let mut rng = ChaCha8Rng::seed_from_u64(2);
+        let mut rows = Vec::new();
+        let mut y = Vec::new();
+        for _ in 0..500 {
+            let a: f64 = rng.random::<f64>() * 2.0 - 1.0;
+            let b: f64 = rng.random::<f64>() * 2.0 - 1.0;
+            y.push(if a > 0.2 {
+                0
+            } else if b > 0.2 {
+                1
+            } else {
+                2
+            });
+            rows.push(vec![
+                a,
+                b,
+                if rng.random::<f64>() < 0.1 {
+                    f64::NAN
+                } else {
+                    a
+                },
+            ]);
+        }
+        let x = Matrix::from_rows(&rows);
+        let mut lr = Logistic::new(1.0, &cfg);
+        lr.fit(&x, &y).unwrap();
+        let p = lr.predict_proba(&x).unwrap();
+        let (c, b0) = lr.contributions(&x).unwrap();
+        // the missing indicator column has its own coefficient, so allow its share through
+        // by checking the identity only on rows without a missing value
+        for i in (0..x.n).filter(|&i| x.row(i).iter().all(|v| v.is_finite())) {
+            let mut z = b0;
+            for f in &c[i] {
+                for k in 0..3 {
+                    z[k] += f[k];
+                }
+            }
+            let m = z.iter().cloned().fold(f64::MIN, f64::max);
+            let e: Vec<f64> = z.iter().map(|v| (v - m).exp()).collect();
+            let s: f64 = e.iter().sum();
+            for k in 0..3 {
+                assert!((e[k] / s - p[i][k]).abs() < 1e-9, "row {i} class {k}");
+            }
+        }
+        let imp = lr.importance(&x).unwrap();
+        assert_eq!(imp.len(), 3);
+        // the noise free column a drives class 0 more than the unrelated indicator-free b
+        assert!(imp[0][0] > imp[1][0]);
     }
 }

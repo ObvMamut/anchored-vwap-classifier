@@ -102,6 +102,8 @@ pub struct StrategyConfig {
     pub logistic_max_iterations: u64,
     /// Upper bound of boosting rounds searched by the inner folds.
     pub lgbm_max_rounds: i64,
+    /// Spacing of the checkpoint rounds at which the inner folds are scored.
+    pub lgbm_round_step: i64,
     /// Fewer training events than this make a fold abstain.
     pub min_train_events: usize,
     /// Lower and upper end and step of the threshold grid on the rejection probability.
@@ -127,6 +129,8 @@ impl StrategyConfig {
             || self.logistic_l2_grid.is_empty()
             || self.logistic_l2_grid.iter().any(|&a| a < 0.0)
             || self.lgbm_max_rounds < 1
+            || self.lgbm_round_step < 1
+            || self.lgbm_round_step > self.lgbm_max_rounds
             || self.lgbm_grid.is_empty()
             || self.lgbm_grid.iter().any(|g| g.num_leaves < 2)
             || !(self.tau_min > 0.0 && self.tau_min < self.tau_max && self.tau_max < 1.0)
