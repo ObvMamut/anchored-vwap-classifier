@@ -1,0 +1,75 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # nightly run with many more property test cases
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  check:
+    name: format, lint, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies (LightGBM is compiled from source)
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential
+      - name: Install the pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+
+  pipeline:
+    name: pipeline and reproduction of the recorded research
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential fonts-dejavu-core
+      - name: Install the pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release
+      - name: Preflight
+        run: ./target/release/vwap doctor config
+      - name: Run the deterministic pipeline on the committed data
+        run: ./target/release/vwap pipeline config
+      - name: Verify the research ledger
+        run: ./target/release/vwap research verify config
+      - name: Replay every recorded hypothesis card
+        run: ./target/release/vwap research replay all config
+
+  proptest:
+    name: nightly property tests
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential
+      - name: Install the pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Property tests with 1000 cases
+        run: cargo test --workspace
+        env:
+          PROPTEST_CASES: "1000"
