@@ -25,6 +25,9 @@ toml.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+linfa = "0.8"
+linfa-logistic = "0.8"
+ndarray = "0.16"
 
 [lints]
 workspace = true

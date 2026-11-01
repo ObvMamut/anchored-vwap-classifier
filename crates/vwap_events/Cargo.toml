@@ -16,9 +16,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+vwap_testkit = { path = "../vwap_testkit" }
 proptest.workspace = true
-chrono.workspace = true
-toml.workspace = true
 
 [lints]
 workspace = true

@@ -2,105 +2,25 @@
 //! all events that closed before the cut bit for bit unchanged.
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
-use chrono::NaiveDate;
 use proptest::prelude::*;
 use vwap_core::DataConfig;
-use vwap_data::{RawBars, clean::clean, time::utc_of_local};
 use vwap_events::{build, detect, event_params};
 use vwap_features::{LevelTable, SessionIndex, build_features, feature_names};
 
 fn data_cfg() -> DataConfig {
-    toml::from_str(
-        r#"
-input_path = "x"
-output_dir = "x"
-artifact_dir = "x"
-timestamp_kind = "utc"
-server_offset_hours = 7
-bar_label = "open"
-session_anchor = "globex"
-weight_column = "tick_volume"
-price_grid = 0.1
-drop_invalid_bars = true
-roll_offset_days = 8
-roll_buffer_sessions = 1
-roll_confirm_percentile = 0.99
-roll_search_window_days = 21
-max_gap_minutes_ok = 2
-max_gap_minutes_event = 5
-outlier_z = 12.0
-outlier_window_bars = 100
-max_range_median_multiple = 40.0
-min_bars_fraction = 0.5
-early_close_time = "13:15"
-flat_time_globex = "16:55"
-flat_time_rth = "16:00"
-expected_session_bars = 1380.0
-"#,
-    )
-    .unwrap()
+    vwap_testkit::data_config()
 }
 
 fn events_cfg() -> vwap_core::EventsConfig {
-    toml::from_str(
-        r#"
-timeframes = [5, 15]
-atr_length = 14
-rearm_k = 0.3
-exclude_minutes = 30
-vwap_reference = "bar_close"
-output_dir = "x"
-spotcheck_days = 1
-spotcheck_seed = 1
-spotcheck_dir = "x"
-font_paths = ["x"]
-spotcheck_min_session_minutes = 1000
-"#,
-    )
-    .unwrap()
+    vwap_testkit::events_config(0.3, 30)
 }
 
 const DAYS: usize = 5;
-const PER_DAY: usize = 1380; // 18:00 to 17:00
+const PER_DAY: usize = vwap_testkit::BARS_PER_DAY;
 
 /// Five Globex sessions on consecutive weekdays, a random walk with random tick volume.
 fn series(steps: &[i32], weights: &[u8]) -> vwap_data::CleanBars {
-    let mut ts = Vec::new();
-    let mut anchor = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(); // a Monday
-    for _ in 0..DAYS {
-        for m in 1080..1440u32 {
-            ts.push(utc_of_local(anchor, m).unwrap());
-        }
-        let next = anchor.succ_opt().unwrap();
-        for m in 0..1020u32 {
-            ts.push(utc_of_local(next, m).unwrap());
-        }
-        anchor = next;
-    }
-    let n = ts.len();
-    assert_eq!(n, DAYS * PER_DAY);
-    let mut price = 18000.0f64;
-    let (mut o, mut h, mut l, mut c) = (vec![], vec![], vec![], vec![]);
-    for s in steps {
-        let open = price;
-        price = (price + f64::from(*s) * 0.1).max(1000.0);
-        let close = (price * 10.0).round() / 10.0;
-        o.push(open);
-        c.push(close);
-        h.push(open.max(close) + 0.2);
-        l.push(open.min(close) - 0.2);
-    }
-    let raw = RawBars {
-        ts_us: ts,
-        open: o,
-        high: h,
-        low: l,
-        close: c,
-        volume: vec![0.0; n],
-        tick_volume: weights.iter().map(|&w| f64::from(w) + 1.0).collect(),
-        source_dtype: "test".into(),
-    };
-    clean(&raw, &data_cfg()).unwrap().0
+    vwap_testkit::multi_day_bars(DAYS, steps, weights)
 }
 
 proptest! {

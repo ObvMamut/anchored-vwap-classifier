@@ -22,5 +22,9 @@ clap.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 
+[dev-dependencies]
+polars.workspace = true
+chrono.workspace = true
+
 [lints]
 workspace = true
