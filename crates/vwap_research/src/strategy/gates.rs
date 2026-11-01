@@ -18,7 +18,11 @@ fn not_above(x: f64, t: f64) -> bool {
 
 /// Conditions that depend on this strategy alone. Returns the failed ones, in words; an empty
 /// list means the predictive and economic gates hold.
-pub fn own_failures(r: &StrategyResult, v: &ValidationConfig) -> Vec<String> {
+pub fn own_failures(
+    r: &StrategyResult,
+    v: &ValidationConfig,
+    min_trades_per_week: Option<f64>,
+) -> Vec<String> {
     let mut f = Vec::new();
     let n = r.folds.len();
     let more_than_half = |k: usize| 2 * k > n;
@@ -80,6 +84,14 @@ pub fn own_failures(r: &StrategyResult, v: &ValidationConfig) -> Vec<String> {
         f.push(format!(
             "pooled net expectancy lower bound {:.4} ticks is not above zero",
             r.expectancy_interval.0
+        ));
+    }
+    if let Some(rate) = min_trades_per_week
+        && (r.trades_per_week.is_nan() || r.trades_per_week < rate)
+    {
+        f.push(format!(
+            "{:.2} trades per week over {:.0} weeks, at least {rate:.1} are required",
+            r.trades_per_week, r.weeks
         ));
     }
     if not_above(r.net_at_2_ticks, 0.0) {

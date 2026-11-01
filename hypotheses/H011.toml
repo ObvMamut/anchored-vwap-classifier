@@ -1,0 +1,8 @@
+id = "H011"
+family = "regime"
+mechanism = "Fighting the slope. When price approaches a VWAP whose slope runs against the approach direction, the day's flow is pushing through the level from the other side, so the touch should be rejected less often than touches that arrive with the slope. The feature is the VWAP slope over the last hour signed by the approach side, in volatility units. Predicted negative for the bottom tercile, which means fewer rejections than the other touches. The bottom tercile is a third of the eligible touches, above the 4 per week the owner requires on both timeframes."
+outcome = "rejection_given_resolved"
+feature = "vslope_align"
+rule = "bottom_tercile"
+direction = "negative"
+timeframes = [5, 15]

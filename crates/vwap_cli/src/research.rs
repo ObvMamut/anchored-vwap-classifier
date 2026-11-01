@@ -42,6 +42,10 @@ struct World {
     coarse: std::collections::BTreeMap<u32, vwap_events::CoarseBars>,
     clean: crate::ctx::Clean,
     samples: Vec<vwap_research::Sample>,
+    data: vwap_core::DataConfig,
+    events: vwap_core::EventsConfig,
+    features: vwap_core::FeaturesConfig,
+    calendar: vwap_features::CalendarTable,
 }
 
 fn world(config: &Path) -> Result<World> {
@@ -66,21 +70,61 @@ fn world(config: &Path) -> Result<World> {
         coarse,
         clean,
         samples,
+        data,
+        events: ev,
+        features: feat,
+        calendar,
     })
+}
+
+/// The labels and samples a strategy card runs on: `labels.toml` as it is, or with the barrier
+/// shape of the card (then the samples are built again for that shape).
+struct Cell {
+    labels: vwap_core::LabelsConfig,
+    own: Option<Vec<vwap_research::Sample>>,
 }
 
 impl World {
     fn env<'a>(&'a self, config: &'a Path) -> Env<'a> {
+        self.env_with(config, &self.labels)
+    }
+
+    fn env_with<'a>(&'a self, config: &'a Path, labels: &'a vwap_core::LabelsConfig) -> Env<'a> {
         Env {
             research: &self.research,
             strategy: &self.strategy,
             validation: &self.validation,
             backtest: &self.backtest,
-            labels: &self.labels,
+            labels,
             config_dir: config,
             coarse: &self.coarse,
             one: &self.clean.bars,
         }
+    }
+
+    fn samples_for(&self, labels: &vwap_core::LabelsConfig) -> Vec<vwap_research::Sample> {
+        vwap_dataset::assemble(
+            &self.data,
+            &self.events,
+            labels,
+            &self.features,
+            &self.calendar,
+            &self.clean.bars,
+        )
+    }
+
+    /// The cell of the strategy card in `path`.
+    fn cell(&self, path: &Path) -> Result<Cell> {
+        let (card, _) = vwap_research::strategy::load_strategy_card(path)?;
+        let labels = card.label_config(&self.labels);
+        let own = card.has_label_override().then(|| self.samples_for(&labels));
+        Ok(Cell { labels, own })
+    }
+}
+
+impl Cell {
+    fn samples<'a>(&'a self, w: &'a World) -> &'a [vwap_research::Sample] {
+        self.own.as_deref().unwrap_or(&w.samples)
     }
 }
 
@@ -111,12 +155,13 @@ pub fn strategy(id: &str, config: &Path) -> Result<String> {
     );
     let (path, commit) = committed_card(&cfg, id)?;
     let w = world(config)?;
+    let cell = w.cell(&path)?;
     let runs = vwap_research::strategy::execute_strategy(
-        &w.env(config),
+        &w.env_with(config, &cell.labels),
         &path,
         &commit,
         &w.clean.fingerprint,
-        &w.samples,
+        cell.samples(&w),
     )?;
     let mut out = String::new();
     for r in &runs {
@@ -137,6 +182,205 @@ pub fn strategy(id: &str, config: &Path) -> Result<String> {
             out.push_str(&format!("  failed: {f}\n"));
         }
     }
+    Ok(out)
+}
+
+/// What taking every touch toward rejection would have earned on the walk forward test windows
+/// of the discovery segment. Descriptive: no model, no ledger entry, no alpha.
+pub fn benchmark(config: &Path, grid: bool) -> Result<String> {
+    if grid {
+        return benchmark_grid(config);
+    }
+    let cfg = vwap_core::load_research_config(config)?;
+    guard_ledger(&cfg)?;
+    let w = world(config)?;
+    let res = vwap_research::strategy::run_benchmark(
+        &w.env(config),
+        &w.samples,
+        &w.coarse.keys().copied().collect::<Vec<u32>>(),
+    )?;
+    let dir =
+        std::path::Path::new(&vwap_core::load_report_config(config)?.output_dir).to_path_buf();
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(
+        dir.join("benchmark.json"),
+        serde_json::to_string_pretty(&res)?,
+    )?;
+    let f = |x: f64, d: usize| {
+        if x.is_finite() {
+            format!("{x:.d$}")
+        } else {
+            "n/a".into()
+        }
+    };
+    let mut out = String::new();
+    for b in &res {
+        out.push_str(&format!(
+            "{}m, round trip cost {:.1} ticks\n",
+            b.width, b.round_trip_ticks
+        ));
+        for p in &b.results {
+            out.push_str(&format!("  {}\n", p.policy));
+            out.push_str("    fold  touches trades  per week  rej/resolved  win  win net  avg gross  avg net  target  breakeven  edge\n");
+            for r in p.folds.iter().chain(std::iter::once(&p.pooled)) {
+                let label = r.fold.map_or("all".to_string(), |k| (k + 1).to_string());
+                out.push_str(&format!(
+                    "    {label:>4}  {:>7} {:>6}  {:>8}  {:>12}  {:>5} {:>7}  {:>9} {:>8}  {:>7} {:>9} {:>6}\n",
+                    r.touches,
+                    r.trades,
+                    f(r.trades_per_week, 1),
+                    f(100.0 * r.rejection_share_resolved, 1),
+                    f(100.0 * r.win_rate, 1),
+                    f(100.0 * r.win_rate_net, 1),
+                    f(r.avg_gross_ticks, 2),
+                    f(r.avg_net_ticks, 2),
+                    f(r.mean_target_ticks, 0),
+                    f(100.0 * r.breakeven_win_rate, 1),
+                    f(100.0 * r.edge, 1),
+                ));
+            }
+            out.push_str(&format!(
+                "    pooled net ticks per trade, interval [{}, {}]\n",
+                f(p.net_interval.0, 2),
+                f(p.net_interval.1, 2)
+            ));
+        }
+    }
+    Ok(out)
+}
+
+#[derive(serde::Serialize)]
+struct GridRow {
+    width: u32,
+    m1: f64,
+    m2: f64,
+    horizon: usize,
+    trades: usize,
+    win_rate: f64,
+    breakeven_win_rate: f64,
+    edge: f64,
+    avg_net_ticks: f64,
+    net_interval: (f64, f64),
+}
+
+/// Every cell of the label grid, taking every touch toward rejection. Descriptive, but the cells
+/// examined are counted as trials in the ledger (once), because choosing one later is a selection.
+fn benchmark_grid(config: &Path) -> Result<String> {
+    let cfg = vwap_core::load_research_config(config)?;
+    guard_ledger(&cfg)?;
+    let w = world(config)?;
+    let g = w.labels.grid.clone();
+    let mut rows: Vec<GridRow> = Vec::new();
+    for width in w.coarse.keys().copied() {
+        let horizons = if width == 5 {
+            &g.horizon_5m
+        } else {
+            &g.horizon_15m
+        };
+        for &m1 in &g.m1 {
+            for &m2 in &g.m2 {
+                for &h in horizons {
+                    let mut labels = w.labels.clone();
+                    labels.m1 = m1;
+                    labels.m2 = m2;
+                    if width == 5 {
+                        labels.horizon_5m = h;
+                    } else {
+                        labels.horizon_15m = h;
+                    }
+                    let samples = w.samples_for(&labels);
+                    let res = vwap_research::strategy::run_benchmark(
+                        &w.env_with(config, &labels),
+                        &samples,
+                        &[width],
+                    )?;
+                    let Some(p) = res
+                        .iter()
+                        .find(|b| b.width == width)
+                        .and_then(|b| b.results.first())
+                    else {
+                        continue;
+                    };
+                    rows.push(GridRow {
+                        width,
+                        m1,
+                        m2,
+                        horizon: h,
+                        trades: p.pooled.trades,
+                        win_rate: p.pooled.win_rate,
+                        breakeven_win_rate: p.pooled.breakeven_win_rate,
+                        edge: p.pooled.edge,
+                        avg_net_ticks: p.pooled.avg_net_ticks,
+                        net_interval: p.net_interval,
+                    });
+                }
+            }
+        }
+    }
+    let dir = std::path::PathBuf::from(&vwap_core::load_report_config(config)?.output_dir);
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(
+        dir.join("benchmark_grid.json"),
+        serde_json::to_string_pretty(&rows)?,
+    )?;
+    let ledger = vwap_research::Ledger::open(Path::new(&cfg.ledger_path));
+    let positive = rows.iter().filter(|r| r.edge > 0.0).count();
+    // one search per distinct grid and cost: a changed grid or cost is a new search
+    let key = format!(
+        "{:?}|{:?}|{:?}|{:?}|{}",
+        g.m1,
+        g.m2,
+        g.horizon_5m,
+        g.horizon_15m,
+        w.backtest.round_trip_ticks()
+    );
+    let name = format!(
+        "label_grid_benchmark_{}",
+        vwap_core::manifest::sha256_bytes(key.as_bytes())
+            .chars()
+            .take(12)
+            .collect::<String>()
+    );
+    let counted = ledger.record_search(
+        &name,
+        rows.len(),
+        &format!(
+            "take every touch over {} label grid cells: {positive} with a positive win rate edge",
+            rows.len()
+        ),
+        &head(),
+    )?;
+    let mut sorted: Vec<&GridRow> = rows.iter().collect();
+    sorted.sort_by(|a, b| b.edge.total_cmp(&a.edge));
+    let mut out = format!(
+        "{} cells, {positive} with a positive edge ({} trials {})\n  tf   m1    m2  horizon  trades   win  break even   edge  net ticks (interval)\n",
+        rows.len(),
+        rows.len(),
+        if counted {
+            "added to the ledger"
+        } else {
+            "already counted"
+        }
+    );
+    for r in sorted.iter().take(12) {
+        out.push_str(&format!(
+            "  {:>2}m {:>4} {:>5} {:>7} {:>7} {:>5.1} {:>10.1} {:>6.1}  {:.2} ({:.2} to {:.2})\n",
+            r.width,
+            r.m1,
+            r.m2,
+            r.horizon,
+            r.trades,
+            100.0 * r.win_rate,
+            100.0 * r.breakeven_win_rate,
+            100.0 * r.edge,
+            r.avg_net_ticks,
+            r.net_interval.0,
+            r.net_interval.1
+        ));
+    }
+    out.push_str(
+        "(the 12 cells with the highest edge; all cells are in reports/benchmark_grid.json)\n",
+    );
     Ok(out)
 }
 
@@ -235,11 +479,16 @@ pub fn confirm(id: &str, config: &Path) -> Result<String> {
             "{id} has no PROMOTE verdict on any timeframe"
         );
         let w = world(config)?;
-        let env = w.env(config);
+        let cell = w.cell(&path)?;
+        let env = w.env_with(config, &cell.labels);
         let mut out = String::new();
         for width in widths {
             let r = vwap_research::strategy::execute_strategy_confirm(
-                &env, &path, width, &commit, &w.samples,
+                &env,
+                &path,
+                width,
+                &commit,
+                cell.samples(&w),
             )?;
             out.push_str(&format!("{id} on {width}m confirmation: {:?}\n", r.verdict));
             for f in &r.failed {
@@ -273,13 +522,15 @@ pub fn holdout(config: &Path) -> Result<String> {
             .width
             .ok_or_else(|| anyhow::anyhow!("the freeze file of a strategy needs a width"))?;
         let w = world(config)?;
+        let card_path = Path::new(&cfg.cards_dir).join(format!("{}.toml", f.card_id));
+        let cell = w.cell(&card_path)?;
         let r = vwap_research::strategy::execute_strategy_holdout(
-            &w.env(config),
+            &w.env_with(config, &cell.labels),
             &f.card_id,
             width,
             &f.note,
             &head(),
-            &w.samples,
+            cell.samples(&w),
         )?;
         let mut out = format!("{} on {width}m holdout: {:?}\n", f.card_id, r.verdict);
         for x in &r.failed {
@@ -342,7 +593,6 @@ pub fn replay(id: &str, config: &Path) -> Result<String> {
         vec![id.to_string()]
     };
     let w = world(config)?;
-    let env = w.env(config);
     let mut out: Vec<serde_json::Value> = Vec::new();
     let mut bad: Vec<String> = Vec::new();
     for card_id in &ids {
@@ -354,13 +604,15 @@ pub fn replay(id: &str, config: &Path) -> Result<String> {
                 .filter(|(c, _)| c == card_id)
                 .map(|(_, w)| w)
                 .collect();
+            let cell = w.cell(&path)?;
+            let env = w.env_with(config, &cell.labels);
             for width in widths {
                 let r = vwap_research::strategy::replay_strategy(
                     &env,
                     &path,
                     width,
                     &w.clean.fingerprint,
-                    &w.samples,
+                    cell.samples(&w),
                 )?;
                 if !r.matches {
                     bad.push(format!("{card_id}/{width}m"));

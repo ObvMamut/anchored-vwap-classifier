@@ -104,7 +104,22 @@ pub fn execute(
         source,
     })?;
     let rp = dir.join(format!("{}.md", card.id));
-    fs::write(&rp, render(&card, &result, "discovery")).map_err(|source| ResearchError::Io {
+    let mut text = render(&card, &result, "discovery");
+    // how often the subset would trade: the owner requires an average of 4 trades per week
+    let weeks = (ResearchConfig::date_us(&cfg.confirm_start)
+        - ResearchConfig::date_us(&cfg.discovery_start)) as f64
+        / (7.0 * 86_400_000_000.0);
+    text.push_str("\n## Trade frequency\n\n");
+    for w in &result.widths {
+        text.push_str(&format!(
+            "* {}m: the subset has {} events, {:.1} per week over the {:.0} weeks of the discovery segment.\n",
+            w.width,
+            w.n_subset,
+            w.n_subset as f64 / weeks,
+            weeks
+        ));
+    }
+    fs::write(&rp, text).map_err(|source| ResearchError::Io {
         path: rp.display().to_string(),
         source,
     })?;
@@ -198,6 +213,7 @@ pub fn execute_diagnostic(
             name: format!("omnibus_decomposition_{t:?}"),
             git_commit: git_commit.to_string(),
             note,
+            trials_added: 0,
             time_utc: now(),
         })?;
         out.push(d);

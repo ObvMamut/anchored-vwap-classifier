@@ -1,0 +1,7 @@
+id = "S004"
+kind = "strategy"
+mechanism = "Direction model. Logistic regression trained only on touches that resolve, rejection against breakthrough, so that the clock driven chop structure no longer dominates the fit. Calibrated, then a threshold on the probability of rejection is tuned on out of fold data and must allow at least 4 trades per week on average. Default barriers."
+model = "logistic"
+target = "direction"
+min_trades_per_week = 4.0
+timeframes = [5, 15]

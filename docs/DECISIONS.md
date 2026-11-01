@@ -201,3 +201,42 @@ After the negative result of section 14 the owner asked for the specified stages
 
 **Caveats.** The 15 minute skill is a statement about three class probabilities, not an edge. The tests of the strategy stages use a synthetic market with a planted signal, which proves the plumbing and the gates and nothing about NQ. The calendar features and the live fetch are untested against the real sites.
 
+**Win rate of taking every touch (descriptive benchmark).** Because the strategies made no trades they have no win rate, so `vwap research benchmark config` simulates the plain rule: take every touch toward rejection, with the label barriers as target and stop, the configured costs (2.8 ticks round trip) and the same five test windows of the discovery segment. It uses the discovery view only, adds no ledger entry and spends no alpha. Pooled over the five windows, with every touch taken:
+
+* **5 minute:** 5,326 trades, rejection share among resolved touches 48.9 percent, win rate 48.9 percent (48.8 net of cost), average `-0.61` ticks gross and `-3.41` net, interval `-4.65` to `-2.17`. The barriers average 39 ticks, so the win rate needed to break even is $p^{*} = \tfrac12 + \kappa / (2\bar\sigma) = 53.6$ percent, 4.7 points above what was seen.
+* **15 minute:** 2,764 trades, rejection share 47.9 percent, win rate 48.0 percent (47.6 net), average `-1.98` ticks gross and `-4.78` net, interval `-8.14` to `-1.39`. The barriers average 72 ticks and the break even win rate is 51.9 percent, 3.9 points above.
+* In every one of the five windows and on both timeframes the win rate is below the break even rate, and the gross average is negative in 9 of 10 windows. Taking one trade at a time (the configured policy) changes nothing: the pooled net average is `-3.44` and `-4.73` ticks.
+
+This agrees with the strategy runs: the plain win rate is a coin flip, and no filter that the models could learn from out of fold data lifted it above the break even rate. The best lead on discovery data remains level confluence (section 14), which is unconfirmed and had an interval that includes zero.
+
+## 17. The search for a better win rate
+
+**Request and target.** The owner asked for a better win rate and then for an average of at least 4 trades per week. The target chosen was an edge: the win rate must beat the break even rate of the same barriers and costs,
+$$ p^{*} = \frac{S + \kappa}{T + S}, $$
+with target $T$ and stop $S$ in ticks and cost $\kappa = 2.8$ ticks, because a higher raw win rate bought with a smaller target raises $p^{*}$ by the same amount. Stated before any run: a null result was the most likely outcome.
+
+**Baseline** (section 16): taking every touch wins 48.9 percent (5 minute) and 48.0 percent (15 minute) against break even rates of 53.6 and 51.9 percent.
+
+**Tooling added.** The edge (win rate minus $p^{*}$) in the benchmark and in every strategy summary; strategy cards can train on resolved touches only (`target = "direction"`), set their own barrier shape, and require an average number of trades per week (`min_trades_per_week`, which also constrains the tuned threshold and is a gate); `vwap research benchmark --grid` examines the whole label grid and records its cells as counted trials, once per distinct grid and cost (the ledger name carries a hash of both). The edge is an approximation: $p^{*} = (S + \kappa)/(T + S)$ ignores trades that end at the horizon, so net ticks decide, not the edge. `min_trades_per_week` is a necessary condition only: a threshold that trades often enough can still lose money. None of this touches `strategy.toml`, `validation.toml` or `backtest.toml`, so all earlier records still replay.
+
+**1. Barrier shapes (96 cells, every touch, both timeframes).** Raw win rates run from 24.9 to 73.6 percent: a small target and a wide stop makes the win rate high. No cell has a positive net expectancy; the best, a 0.5 target and a 1.0 stop on 15 minute bars with a long horizon, wins 66.0 percent against 69.3 percent needed and loses 1.85 ticks per trade. Four cells show a positive win rate edge, but the approximation ignores trades that end at the horizon, and their net result is negative with an interval below zero. The 96 cells are counted as trials.
+
+**2. Four new hypothesis cards** (existing features, mechanism written first, outcome rejection given resolved, alpha 0.0033 each):
+
+| Card | Rule (prediction) | 5 minute difference, p | 15 minute difference, p | Verdict |
+|---|---|---|---|---|
+| H008 stretch exhaustion | `band_pos_max` top tercile (positive) | $-1.35$ points, 0.90 | $-2.26$ points, 0.92 | Drop, opposite sign |
+| H009 quiet market | `vol_ratio` bottom tercile (positive) | $+0.84$ points, 0.22 | $+1.02$ points, 0.26 | Drop |
+| H010 grind in | `bars_on_side` top tercile (negative) | $-1.16$ points, 0.16 | $+0.03$ points, 0.51 | Drop |
+| H011 fighting the slope | `vslope_align` bottom tercile (negative) | $+1.84$ points, 0.95 | $+0.92$ points, 0.71 | Drop, opposite sign |
+
+The opposite sign of H008 was not turned into a new card after the fact: that would be a post hoc flip with its own alpha cost and, at 15 minutes, a one sided p of about 0.08 in that direction. Cards run: 11 of 12; alpha spent 0.0467 of 0.05, so one card with 0.0033 is left.
+
+**3. Direction models, 6 strategy cards (S004 to S009), 12 runs.** Logistic regression and LightGBM trained only on touches that resolve, the default barriers and the four barrier cells fixed before the grid was read, each required to average 4 trades per week. The pooled Brier skill on resolved touches is between $-0.0059$ and $+0.0001$ in all 12 runs, every interval contains zero, and every fold of every run abstained: no threshold on the calibrated probability of rejection earned a positive lower bound after costs. So the 15 minute skill of section 16 was chop, and with the chop removed from the objective there is nothing left. Rejection against breakthrough is not predictable from the 34 features in this data.
+
+**4. The 4 trades per week requirement.** Over the 130 weeks of the test windows it means at least 520 trades, which is 10 percent of 5 minute touches (about 41 per week) and 19 percent of 15 minute touches (about 21 per week). The only lead in the record, a touch that coincides with two or more other levels (H007), has 115 to 142 events in 254 weeks, about half a trade per week, so it could not meet the requirement even if it were confirmed.
+
+**Result.** The win rate cannot be raised honestly on this data. The all touch win rate is 48 to 49 percent against a break even rate of 52 to 54 percent; no feature subset, no model and no barrier shape lifted it above break even. Counted trials are now 126 (the omnibus, 11 cards, 18 strategy runs and the 96 grid cells). Everything stayed on the discovery segment: confirmation and holdout are untouched, and nothing was promoted.
+
+**What would change this.** More history or a different instrument, real traded volume instead of a tick count, or a mechanism that the 34 features cannot see (order flow, the order book). A new idea needs a new card and costs part of the one remaining alpha share.
+

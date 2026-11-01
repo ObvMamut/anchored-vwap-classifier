@@ -74,9 +74,11 @@ fn sub_summary_path(env: &Env, sub: &str, id: &str, width: u32) -> PathBuf {
 fn registered_strategy(
     ledger: &Ledger,
     card_path: &Path,
+    labels: &LabelsConfig,
 ) -> Result<(StrategyCard, String), ResearchError> {
     let (card, hash) = load_strategy_card(card_path)?;
     card.validate(feature_names())?;
+    card.check_labels(labels)?;
     match ledger.registered_hash(&card.id)? {
         None => Err(ResearchError::NotRegistered { id: card.id }),
         Some(h) if h != hash => Err(ResearchError::CardChanged {
@@ -88,11 +90,13 @@ fn registered_strategy(
     }
 }
 
-fn configs<'a>(env: &'a Env) -> Configs<'a> {
+fn configs<'a>(env: &'a Env, card: &StrategyCard) -> Configs<'a> {
     Configs {
         strategy: env.strategy,
         validation: env.validation,
         backtest: env.backtest,
+        direction: card.direction(),
+        min_trades_per_week: card.min_trades_per_week,
     }
 }
 
@@ -146,7 +150,7 @@ pub fn execute_strategy(
     samples: &[Sample],
 ) -> Result<Vec<StrategyRun>, ResearchError> {
     let ledger = Ledger::open(Path::new(&env.research.ledger_path));
-    let (card, hash) = registered_strategy(&ledger, card_path)?;
+    let (card, hash) = registered_strategy(&ledger, card_path, env.labels)?;
     let view = DiscoveryView::select(samples, &Bounds::from_config(env.research));
     if view.samples().len() < env.research.min_discovery_samples {
         return Err(ResearchError::NotEnoughData(format!(
@@ -182,7 +186,7 @@ pub fn execute_strategy(
             bars_for(env, width)?,
             env.one,
             &discovery_geometry(env, width),
-            &configs(env),
+            &configs(env, &card),
         )?;
         let own = Series {
             key: format!("{}_{width}m", card.id),
@@ -191,7 +195,11 @@ pub fn execute_strategy(
         let others = read_series(Path::new(&env.research.strategies_dir))?;
         let n_trials = ledger.trials()? + 1;
         let d = dsr_pbo(&own, &others, n_trials, env.validation);
-        let (verdict, failed) = decide(own_failures(&result, env.validation), &d, env.validation);
+        let (verdict, failed) = decide(
+            own_failures(&result, env.validation, card.min_trades_per_week),
+            &d,
+            env.validation,
+        );
         let summary = Summary {
             card_id: &card.id,
             card_sha256: &hash,
@@ -286,6 +294,8 @@ fn evaluate_segment(
             strategy: env.strategy,
             validation: &v,
             backtest: env.backtest,
+            direction: card.direction(),
+            min_trades_per_week: card.min_trades_per_week,
         },
     )
 }
@@ -337,7 +347,7 @@ pub fn execute_strategy_confirm(
     samples: &[Sample],
 ) -> Result<SegmentRun, ResearchError> {
     let ledger = Ledger::open(Path::new(&env.research.ledger_path));
-    let (card, hash) = registered_strategy(&ledger, card_path)?;
+    let (card, hash) = registered_strategy(&ledger, card_path, env.labels)?;
     let permit = ledger.strategy_confirm_permit(&card.id, width)?;
     let promoted = (ledger.promoted_cards()?.len() + ledger.promoted_strategies()?.len()).max(1);
     let alpha = env.research.alpha_total / promoted as f64;
@@ -355,7 +365,11 @@ pub fn execute_strategy_confirm(
         b.holdout_start,
         alpha,
     )?;
-    let failed = own_failures(&result, &at_alpha(env.validation, alpha));
+    let failed = own_failures(
+        &result,
+        &at_alpha(env.validation, alpha),
+        card.min_trades_per_week,
+    );
     let verdict = if failed.is_empty() {
         Verdict::Confirmed
     } else {
@@ -424,7 +438,7 @@ pub fn execute_strategy_holdout(
         ));
     }
     let card_path = Path::new(&env.research.cards_dir).join(format!("{card_id}.toml"));
-    let (card, hash) = registered_strategy(&ledger, &card_path)?;
+    let (card, hash) = registered_strategy(&ledger, &card_path, env.labels)?;
     let lock = Path::new(&env.research.ledger_path).parent().map_or_else(
         || Path::new("holdout.lock").to_path_buf(),
         |d| d.join("holdout.lock"),
@@ -451,7 +465,11 @@ pub fn execute_strategy_holdout(
     pool.extend_from_slice(hold.samples());
     let alpha = env.research.alpha_total;
     let result = evaluate_segment(env, &card, width, &pool, b.holdout_start, end_us, alpha)?;
-    let failed = own_failures(&result, &at_alpha(env.validation, alpha));
+    let failed = own_failures(
+        &result,
+        &at_alpha(env.validation, alpha),
+        card.min_trades_per_week,
+    );
     let verdict = if failed.is_empty() {
         Verdict::Confirmed
     } else {
@@ -507,6 +525,10 @@ pub fn dsr_report(env: &Env) -> Result<String, ResearchError> {
     Ok(s)
 }
 
+/// Result keys added after the first strategy runs were recorded (S001 to S003). A recorded run
+/// without them still replays; every other unrecorded key is reported as a difference.
+const ADDED_AFTER_RECORDING: [&str; 3] = ["trade_stats", "weeks", "trades_per_week"];
+
 /// Compares two JSON values, floats within a relative tolerance, nulls equal to nulls.
 pub fn json_close(
     a: &serde_json::Value,
@@ -542,8 +564,12 @@ pub fn json_close(
                     None => diffs.push(format!("{path}.{k}: missing")),
                 }
             }
-            for k in y.keys().filter(|k| !x.contains_key(*k)) {
-                diffs.push(format!("{path}.{k}: unexpected"));
+            // only the named additions made after the first runs were recorded may be missing from
+            // the recorded value; any other key the fresh value has is a difference
+            for k in y.keys() {
+                if !x.contains_key(k) && !ADDED_AFTER_RECORDING.contains(&k.as_str()) {
+                    diffs.push(format!("{path}.{k}: not recorded"));
+                }
             }
         }
         _ => {
@@ -574,7 +600,7 @@ pub fn replay_strategy(
 ) -> Result<StrategyReplay, ResearchError> {
     const TOL: f64 = 1e-9;
     let ledger = Ledger::open(Path::new(&env.research.ledger_path));
-    let (card, _) = registered_strategy(&ledger, card_path)?;
+    let (card, _) = registered_strategy(&ledger, card_path, env.labels)?;
     let entry = ledger
         .read_all()?
         .into_iter()
@@ -618,7 +644,7 @@ pub fn replay_strategy(
         bars_for(env, width)?,
         env.one,
         &discovery_geometry(env, width),
-        &configs(env),
+        &configs(env, &card),
     )?;
     let stored: serde_json::Value = serde_json::from_str(&text)?;
     let fresh = serde_json::to_value(&result)?;
@@ -939,5 +965,13 @@ mod tests {
         d.clear();
         json_close(&a, &a, 1e-9, "r", &mut d);
         assert!(d.is_empty());
+        // a key the recorded value lacks passes only when it is a named later addition
+        let old = serde_json::json!({"x": 1.0});
+        let ok = serde_json::json!({"x": 1.0, "trades_per_week": 2.0});
+        let bad = serde_json::json!({"x": 1.0, "surprise": 2.0});
+        json_close(&old, &ok, 1e-9, "r", &mut d);
+        assert!(d.is_empty());
+        json_close(&old, &bad, 1e-9, "r", &mut d);
+        assert_eq!(d, vec!["r.surprise: not recorded".to_string()]);
     }
 }

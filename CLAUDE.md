@@ -102,6 +102,8 @@ vwap research register H008 config
 vwap research run H008 config
 vwap research strategy S001 config      # a model plus the backtest, discovery segment only
 vwap research dsr config                # DSR and PBO over all counted trials
+vwap research benchmark config          # win rate of taking every touch, descriptive, no ledger entry
+vwap research benchmark config --grid   # every label grid cell, counted as trials once per distinct grid
 vwap research confirm H008 config
 vwap research verify config
 vwap research replay all config

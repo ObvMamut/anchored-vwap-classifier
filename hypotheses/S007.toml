@@ -1,0 +1,9 @@
+id = "S007"
+kind = "strategy"
+mechanism = "Barrier shape trial. Target and stop of one and a half volatility scales. Logistic regression on resolved touches only, calibrated, with a threshold tuned on out of fold data that must allow at least 4 trades per week on average. One of four barrier cells fixed before any grid output was read."
+model = "logistic"
+target = "direction"
+min_trades_per_week = 4.0
+timeframes = [5, 15]
+m1 = 1.5
+m2 = 1.5

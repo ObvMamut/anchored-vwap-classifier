@@ -136,6 +136,13 @@ enum ResearchStage {
     Run { id: String, config: PathBuf },
     /// Run a registered strategy card (a model plus the backtest) on the discovery segment.
     Strategy { id: String, config: PathBuf },
+    /// Win rate and expectancy of taking every touch toward rejection (descriptive, no ledger entry).
+    Benchmark {
+        config: PathBuf,
+        /// Every cell of the label grid instead of the configured barriers (counted as trials).
+        #[arg(long)]
+        grid: bool,
+    },
     /// DSR and PBO of every strategy trial, with the trial count of the ledger.
     Dsr { config: PathBuf },
     /// Show the ledger and the remaining budget.
@@ -198,6 +205,7 @@ fn run() -> Result<()> {
             ResearchStage::Run { id, config } => research::run(&id, &config)?,
             ResearchStage::Strategy { id, config } => research::strategy(&id, &config)?,
             ResearchStage::Dsr { config } => research::dsr(&config)?,
+            ResearchStage::Benchmark { config, grid } => research::benchmark(&config, grid)?,
             ResearchStage::Status { config } => research::status(&config)?,
             ResearchStage::Omnibus { config } => research::omnibus(&config)?,
             ResearchStage::Diagnose { config } => research::diagnose(&config)?,
