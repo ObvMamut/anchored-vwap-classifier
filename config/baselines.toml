@@ -1,0 +1,13 @@
+seed = 20260101
+random_levels_per_session = 10
+random_level_z_max = 3.0
+# Shifted anchors as New York minutes of day: 11:00 and 13:00.
+shifted_anchor_minutes = [660, 780]
+stratum_hour_buckets = true
+min_stratum_events = 30
+bootstrap_draws = 2000
+permutations = 5000
+delta_min = 0.02
+alpha = 0.05
+output_dir = "artifacts/baselines"
+report_dir = "reports"

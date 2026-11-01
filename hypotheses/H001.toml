@@ -1,0 +1,8 @@
+id = "H001"
+family = "regime"
+mechanism = "In a trending session the VWAP slopes with the trend and acts as dynamic support or resistance. A pullback into a VWAP that slopes in the approach direction should be rejected more often than a pullback into a flat or counter sloping VWAP, because trend followers add at the average price."
+outcome = "rejection_given_resolved"
+feature = "vslope_align"
+rule = "top_tercile"
+direction = "positive"
+timeframes = [5, 15]
