@@ -1,0 +1,8 @@
+id = "H009"
+family = "regime"
+mechanism = "Quiet market mean reversion. When the volatility scale is small relative to the price, liquidity is deep and participants fade moves back to value, so a touch of the VWAP should be rejected more often than in a fast market where levels are run through. The feature is the volatility scale as a share of the touch close, scaled by ten thousand. Predicted positive for the bottom tercile. The bottom tercile is a third of all touches, about 12 per week on 5 minute and 5 per week on 15 minute bars, above the 4 per week the owner requires."
+outcome = "rejection_given_resolved"
+feature = "vol_ratio"
+rule = "bottom_tercile"
+direction = "positive"
+timeframes = [5, 15]
