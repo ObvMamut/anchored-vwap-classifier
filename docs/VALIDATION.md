@@ -1,6 +1,8 @@
 # Validation
 
-Owner crate: `vwap_validation`. Config: `config/validation.toml`. Symbols: `GLOSSARY.md`.
+> **Status.** Implemented: the three way split, the holdout lock and the experiment ledger (see `PROTOCOL.md`). Specification only, not implemented: purged walk forward splits, the Deflated Sharpe Ratio and the Probability of Backtest Overfitting. They need a strategy to evaluate, and none was promoted.
+
+The research loop of `PROTOCOL.md` implements the split and ledger inside `vwap_research`. The crate `vwap_validation` named here was never built. Symbols: `GLOSSARY.md`.
 
 ## 1. Event spans
 

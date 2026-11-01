@@ -62,6 +62,8 @@ Exit criteria: lookahead matrix fully green; NaN rates understood; calendar snap
 
 **Go or no go**: go when every feature has a passing proof and test. No go for any feature without one: it is removed, not waived.
 
+> **Phases 5 to 7 below are specification only, not implemented.** They are replaced by the research loop (Phase R) and were not started because gate 3b was not passed.
+
 ## Phase 5: Logistic regression and LightGBM under walk forward validation. GATE
 
 Crates: `vwap_validation`, `vwap_model`.

@@ -1,5 +1,7 @@
 # Backtest
 
+> **Status: specification only, not implemented.** Deferred because the research did not pass gate 3b (see `DECISIONS.md`, section 14): there is no directional signal to model or trade on this data. The design is kept so the stage can be built if a hypothesis is promoted or a better data source is found.
+
 Owner crate: `vwap_backtest`. Config: `config/backtest.toml`. Symbols: `GLOSSARY.md`.
 
 The backtest takes the walk forward outer test predictions (never training data), applies the trade rule, simulates fills with costs, and reports. It is the authority on economic value. The label proxy used for tuning $\tau$ in `MODELING.md` is not.

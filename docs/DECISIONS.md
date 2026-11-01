@@ -156,3 +156,17 @@ Protocol: `docs/PROTOCOL.md`. Data: discovery 2016-11-15 to 2021-09-30 only. Con
 * Caveats that apply to all conclusions: the weight is a tick count, the series is a broker style index series and not exchange NQ prints, 2017 to 2020 are gappy, and discovery spans only about 4.9 years.
 
 **Recommended next steps (owner's decision).** Stop here and report the negative result for VWAP touches on this data, or reopen with a new data source (exchange futures with real volume, or more history) and register confluence as the first card there. No holdout run is justified, because nothing was promoted and nothing survived confirmation.
+
+## 15. Operational hardening after the merge
+
+An audit of the merged code found that it ran but was not trustworthy as a repository. What was found and fixed:
+
+1. **The research ledger was git ignored.** `artifacts/research/ledger.jsonl` and the card reports sat under `/artifacts/` and `/reports/`, so a fresh clone had an empty ledger: the alpha budget and the registered card hashes silently reset, and the evidence behind section 14 was not in the repository. They now live in the tracked `research/` directory, byte for byte as recorded. Commands refuse to run if those paths would be ignored.
+2. **Two sources of truth for the holdout.** `config/validation.toml` (24 months before the last bar) was used by the chart command and `research.toml` (fixed dates) by everything else. `validation.toml` and its code are removed. Moreover the chart command drew days from the whole development range, including the confirmation segment that nobody may look at. It now draws discovery days only (2017 to 2021 in the output, where before it also drew 2022 and 2023).
+3. **Hard coded parameters.** Feature windows, the confluence band, time blocks, RTH minutes, the omnibus settings, the self test limits, minimum sample sizes, the strata width, the expected session length and chart fonts moved to `config/features.toml`, `model.toml`, `research.toml`, `baselines.toml`, `data.toml` and `events.toml`. A golden fingerprint of all features, tests that the files equal the built in defaults, and `vwap research replay all` show that no result changed.
+4. **Documented stages that did not exist.** Added `research confirm`, `holdout run`, `doctor`, `pipeline`, `research verify` and `research replay`. Confirmation and the holdout use cut points frozen on discovery. Calendar fetch, features export, model walk forward, backtest, DSR, PBO, TreeSHAP and the report are marked as specification only.
+5. **Stale inputs were not detected.** Every stage now writes a manifest, and every stage after `data clean` verifies the fingerprint of the cleaned data. The raw file checksum is pinned in `config/data.toml`.
+6. **Tests.** `vwap_testkit` replaces three copies of the synthetic data builder; end to end tests run the real binary; the dead `vwap_model` crate is removed (its library tests moved to `vwap_research`).
+7. **Packaging.** README, LICENSE (MIT), `docs/OPERATIONS.md`, a rewritten `CLAUDE.md`, status banners on the unbuilt specifications.
+
+Residual limitations: the confirmation rule does not include the cost adjusted expectancy test (no backtest exists), the confirmation alpha is shared Bonferroni style and not Holm, and the data caveats of section 6 are unchanged.

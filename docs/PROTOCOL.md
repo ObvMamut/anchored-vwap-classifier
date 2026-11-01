@@ -50,7 +50,7 @@ Let $\Delta = \hat\pi_{\mathrm{REJ}}(\text{subset}) - \hat\pi_{\mathrm{REJ}}(\te
 * **REFINE** if $\alpha_{\text{card}} < p < 0.25$ with the predicted sign on both timeframes. One refinement per mechanism, filed as a new card with `parent` set and its own alpha share. A refinement may change cut points or the subset rule, never the outcome or the data.
 * **DROP** otherwise.
 
-Confirmation tests each promoted card once on the `ConfirmView` at one sided $\alpha = 0.05$, Holm adjusted over the promoted cards, with the same direction and cut points. A confirmed card must also have a positive cost adjusted expectancy, from the backtest of `BACKTEST.md`, to count.
+Confirmation (`vwap research confirm`) tests each promoted card once on the `ConfirmView` at a one sided $\alpha = 0.05 / k$ with $k$ the number of promoted cards (a Bonferroni share, the conservative form of a Holm adjustment), with the predicted direction, enough events in each arm and **the cut points frozen on discovery**, never recomputed on the confirmation data. The cost adjusted expectancy requirement of `BACKTEST.md` is not enforced, because the backtest was not built. The single holdout run (`vwap holdout run`) needs `research/FREEZE.toml` naming a confirmed card, a clean git tree and an unused lock file, and applies the same decision rule at $\alpha = 0.05$.
 
 ## 7. The fixed analysis report
 
@@ -77,3 +77,9 @@ The loop stops when the budget is spent, or after two consecutive nulls followin
 ## 10. Ledger
 
 `research/ledger.jsonl`, append only, one JSON object per cycle: cycle number, card id, card SHA256, git commit, view (discovery or confirm), timeframes, trials added, alpha spent, $\Delta$, $p$, verdict, MDE, UTC time. The pipeline never rewrites or deletes it.
+
+## 11. Commands that check the record
+
+* `vwap research verify config`: the ledger follows this protocol (strictly increasing cycles, every run registered first with an unchanged card, budget respected, confirmations only after a PROMOTE) and every commit it names exists.
+* `vwap research replay <id|all> config`: recomputes a card on the discovery view without touching the ledger and compares delta, p value and verdict with the last recorded run, to $10^{-12}$.
+* The commands refuse to run if the ledger or the report directory would be ignored by git, because an untracked audit trail disappears on a fresh clone and silently resets the budget.

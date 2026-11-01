@@ -1,5 +1,7 @@
 # Features
 
+> **Status.** The 18 features actually implemented are listed in section 9. The rest of this document is the original design. The calendar flags (section 6) are specified only and were not built.
+
 Owner crate: `vwap_features`. Config: `config/features.toml`. Symbols: `GLOSSARY.md`.
 
 Every feature is a function of the `CausalView` at the touch bar $t$. The view exposes 1 minute bars and coarse bars with close time at or before the close of bar $t$, the session state built from them, and nothing else. A feature is computed once per event and stored as `f64`; undefined values are `NaN`.

@@ -1,6 +1,8 @@
 # Modeling
 
-Owner crate: `vwap_model`. Config: `config/model.toml`. Symbols: `GLOSSARY.md`. Splits and the experiment log are in `VALIDATION.md`.
+> **Status: specification only, not implemented.** Deferred because the research did not pass gate 3b (see `DECISIONS.md`, section 14): there is no directional signal to model or trade on this data. The design is kept so the stage can be built if a hypothesis is promoted or a better data source is found.
+
+Owner crate: `vwap_model` (never built). `config/model.toml` today holds only the fixed LightGBM settings of the omnibus screen in `vwap_research`. Symbols: `GLOSSARY.md`. Splits and the experiment log are in `VALIDATION.md`.
 
 ## 1. Models, in this order
 
