@@ -25,6 +25,70 @@ pub fn build(config: &Path) -> Result<String> {
     fs::write(&summary, md).with_context(|| format!("writing {}", summary.display()))?;
     let mut text = format!("wrote {}\n", summary.display());
 
+    let bench = out.join("benchmark.json");
+    let mut bench_note = String::new();
+    if bench.exists() {
+        plots::register_fonts(&events.font_paths)?;
+        let v: serde_json::Value = serde_json::from_str(&fs::read_to_string(&bench)?)?;
+        let mut rows: Vec<(String, f64, f64, usize)> = Vec::new();
+        for b in v.as_array().into_iter().flatten() {
+            let w = b
+                .get("width")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let every = b
+                .get("results")
+                .and_then(|r| r.as_array())
+                .and_then(|r| r.first());
+            let Some(every) = every else { continue };
+            let num = |r: &serde_json::Value, k: &str| {
+                r.get(k)
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(f64::NAN)
+            };
+            let cnt = |r: &serde_json::Value| {
+                r.get("trades")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0) as usize
+            };
+            for f in every
+                .get("folds")
+                .and_then(|f| f.as_array())
+                .into_iter()
+                .flatten()
+            {
+                let k = f
+                    .get("fold")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0)
+                    + 1;
+                rows.push((
+                    format!("{w}m f{k}"),
+                    num(f, "win_rate"),
+                    num(f, "breakeven_win_rate"),
+                    cnt(f),
+                ));
+            }
+            if let Some(p) = every.get("pooled") {
+                rows.push((
+                    format!("{w}m all"),
+                    num(p, "win_rate"),
+                    num(p, "breakeven_win_rate"),
+                    cnt(p),
+                ));
+            }
+        }
+        let bars = plots::winrate_bars(&rows);
+        let path = plot_dir.join("benchmark_winrate.png");
+        plots::draw_winrate(
+            &path,
+            "Take every touch toward rejection: win rate (blue) against break even (red)",
+            &bars,
+            (rep.plot_width + 300, rep.plot_height),
+        )?;
+        bench_note = format!("wrote {}\n", path.display());
+    }
+    text.push_str(&bench_note);
     let mut files: Vec<_> = match fs::read_dir(&research.strategies_dir) {
         Ok(rd) => rd
             .filter_map(Result::ok)

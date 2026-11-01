@@ -32,6 +32,19 @@ xychart-beta
     bar [0.0011, 0.0015, 0.0298, 0.0274]
 ```
 
+**What would taking every touch have done?** Toward rejection, with barriers of plus and minus one sigma, 2.8 ticks of cost, on the same five test windows (`vwap research benchmark config`):
+
+| Timeframe | Trades | Win rate | Needed to break even | Net per trade, ticks (95% interval) |
+|---|---|---|---|---|
+| 5 minute | 5,326 | 48.9% | 53.6% | `-3.41` (`-4.65` to `-2.17`) |
+| 15 minute | 2,764 | 48.0% | 51.9% | `-4.78` (`-8.14` to `-1.39`) |
+
+<p align="center">
+  <img src="docs/img/benchmark_winrate.png" width="90%" alt="Win rate of taking every touch against the break even win rate, per fold">
+</p>
+
+A coin flip before costs, and 4 to 5 points short of break even after them, in every fold.
+
 The 15 minute models do know something, but it is range and clock structure (chop), not direction. No threshold on the rejection probability beats the 2.8 tick round trip cost. 14 counted trials, alpha spent 0.0333 of 0.05.
 
 <p align="center">
@@ -88,6 +101,7 @@ cargo build --release
 | Overfitting check | `vwap research dsr config` |
 | Report and plots | `vwap report build config` (writes `reports/`) |
 | Calendar snapshot | `vwap calendar fetch config` (needs internet, features are off until committed) |
+| Win rate of every touch | `vwap research benchmark config` (descriptive, no ledger entry) |
 | Holdout | `vwap holdout run config` (once, needs `research/FREEZE.toml`) |
 
 ## The data

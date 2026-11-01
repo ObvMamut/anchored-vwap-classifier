@@ -140,6 +140,61 @@ pub fn strategy(id: &str, config: &Path) -> Result<String> {
     Ok(out)
 }
 
+/// What taking every touch toward rejection would have earned on the walk forward test windows
+/// of the discovery segment. Descriptive: no model, no ledger entry, no alpha.
+pub fn benchmark(config: &Path) -> Result<String> {
+    let cfg = vwap_core::load_research_config(config)?;
+    guard_ledger(&cfg)?;
+    let w = world(config)?;
+    let res = vwap_research::strategy::run_benchmark(&w.env(config), &w.samples)?;
+    let dir =
+        std::path::Path::new(&vwap_core::load_report_config(config)?.output_dir).to_path_buf();
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(
+        dir.join("benchmark.json"),
+        serde_json::to_string_pretty(&res)?,
+    )?;
+    let f = |x: f64, d: usize| {
+        if x.is_finite() {
+            format!("{x:.d$}")
+        } else {
+            "n/a".into()
+        }
+    };
+    let mut out = String::new();
+    for b in &res {
+        out.push_str(&format!(
+            "{}m, round trip cost {:.1} ticks\n",
+            b.width, b.round_trip_ticks
+        ));
+        for p in &b.results {
+            out.push_str(&format!("  {}\n", p.policy));
+            out.push_str("    fold  touches trades  rej/resolved  win  win net  avg gross  avg net  barrier  breakeven\n");
+            for r in p.folds.iter().chain(std::iter::once(&p.pooled)) {
+                let label = r.fold.map_or("all".to_string(), |k| (k + 1).to_string());
+                out.push_str(&format!(
+                    "    {label:>4}  {:>7} {:>6}  {:>12}  {:>5} {:>7}  {:>9} {:>8}  {:>7} {:>9}\n",
+                    r.touches,
+                    r.trades,
+                    f(100.0 * r.rejection_share_resolved, 1),
+                    f(100.0 * r.win_rate, 1),
+                    f(100.0 * r.win_rate_net, 1),
+                    f(r.avg_gross_ticks, 2),
+                    f(r.avg_net_ticks, 2),
+                    f(r.mean_sigma_ticks, 0),
+                    f(100.0 * r.breakeven_win_rate, 1),
+                ));
+            }
+            out.push_str(&format!(
+                "    pooled net ticks per trade, interval [{}, {}]\n",
+                f(p.net_interval.0, 2),
+                f(p.net_interval.1, 2)
+            ));
+        }
+    }
+    Ok(out)
+}
+
 /// DSR and PBO of every strategy trial.
 pub fn dsr(config: &Path) -> Result<String> {
     let cfg = vwap_core::load_research_config(config)?;

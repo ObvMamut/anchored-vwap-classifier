@@ -201,3 +201,11 @@ After the negative result of section 14 the owner asked for the specified stages
 
 **Caveats.** The 15 minute skill is a statement about three class probabilities, not an edge. The tests of the strategy stages use a synthetic market with a planted signal, which proves the plumbing and the gates and nothing about NQ. The calendar features and the live fetch are untested against the real sites.
 
+**Win rate of taking every touch (descriptive benchmark).** Because the strategies made no trades they have no win rate, so `vwap research benchmark config` simulates the plain rule: take every touch toward rejection, with the label barriers as target and stop, the configured costs (2.8 ticks round trip) and the same five test windows of the discovery segment. It uses the discovery view only, adds no ledger entry and spends no alpha. Pooled over the five windows, with every touch taken:
+
+* **5 minute:** 5,326 trades, rejection share among resolved touches 48.9 percent, win rate 48.9 percent (48.8 net of cost), average `-0.61` ticks gross and `-3.41` net, interval `-4.65` to `-2.17`. The barriers average 39 ticks, so the win rate needed to break even is $p^{*} = \tfrac12 + \kappa / (2\bar\sigma) = 53.6$ percent, 4.7 points above what was seen.
+* **15 minute:** 2,764 trades, rejection share 47.9 percent, win rate 48.0 percent (47.6 net), average `-1.98` ticks gross and `-4.78` net, interval `-8.14` to `-1.39`. The barriers average 72 ticks and the break even win rate is 51.9 percent, 3.9 points above.
+* In every one of the five windows and on both timeframes the win rate is below the break even rate, and the gross average is negative in 9 of 10 windows. Taking one trade at a time (the configured policy) changes nothing: the pooled net average is `-3.44` and `-4.73` ticks.
+
+This agrees with the strategy runs: the plain win rate is a coin flip, and no filter that the models could learn from out of fold data lifted it above the break even rate. The best lead on discovery data remains level confluence (section 14), which is unconfirmed and had an interval that includes zero.
+

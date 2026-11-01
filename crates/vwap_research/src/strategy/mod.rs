@@ -1,12 +1,14 @@
 //! Strategy cards, the walk forward evaluation, the gates and the DSR and PBO bookkeeping.
 //! See `docs/PROTOCOL.md`, section on strategy cards.
 
+pub mod benchmark;
 pub mod card;
 pub mod eval;
 pub mod exec;
 pub mod gates;
 pub mod summary;
 
+pub use benchmark::{BenchmarkResult, breakeven_win_rate, run_benchmark};
 pub use card::{ModelKind, StrategyCard, card_file_hash, is_strategy_text, load_strategy_card};
 pub use eval::{Configs, FoldReport, Geometry, Pooled, StrategyResult, evaluate};
 pub use exec::{

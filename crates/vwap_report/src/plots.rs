@@ -78,8 +78,32 @@ pub struct SwarmRow {
     pub points: Vec<SwarmPoint>,
 }
 
+/// One bar of the win rate plot: the win rate of a group of trades and the win rate it needs to
+/// break even after costs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WinBar {
+    pub label: String,
+    pub win: f64,
+    pub breakeven: f64,
+    pub trades: usize,
+}
+
 // ---------------------------------------------------------------------------------------------
 // pure builders
+
+/// Bars from `(label, win rate, break even win rate, trades)`; groups without a finite value are
+/// left out.
+pub fn winrate_bars(rows: &[(String, f64, f64, usize)]) -> Vec<WinBar> {
+    rows.iter()
+        .filter(|r| r.1.is_finite() && r.2.is_finite())
+        .map(|r| WinBar {
+            label: r.0.clone(),
+            win: r.1,
+            breakeven: r.2,
+            trades: r.3,
+        })
+        .collect()
+}
 
 pub fn curves(bins_per_class: &[Vec<(f64, f64, usize)>], names: &[&str]) -> Vec<Curve> {
     bins_per_class
@@ -329,6 +353,78 @@ pub fn draw_equity(
     root.present().map_err(draw_err)
 }
 
+pub fn draw_winrate(
+    path: &Path,
+    title: &str,
+    bars: &[WinBar],
+    size: (u32, u32),
+) -> Result<(), ReportError> {
+    let root = BitMapBackend::new(path, size).into_drawing_area();
+    root.fill(&WHITE).map_err(draw_err)?;
+    let n = bars.len().max(1);
+    let lo = bars
+        .iter()
+        .flat_map(|b| [b.win, b.breakeven])
+        .fold(0.5f64, f64::min)
+        - 0.04;
+    let hi = bars
+        .iter()
+        .flat_map(|b| [b.win, b.breakeven])
+        .fold(0.5f64, f64::max)
+        + 0.04;
+    let (lo, hi) = (lo.max(0.0), hi.min(1.0));
+    let mut chart = ChartBuilder::on(&root)
+        .caption(title, ("sans-serif", 22))
+        .margin(14)
+        .x_label_area_size(46)
+        .y_label_area_size(60)
+        .build_cartesian_2d(0f64..n as f64, lo..hi)
+        .map_err(draw_err)?;
+    chart
+        .configure_mesh()
+        .disable_x_mesh()
+        .disable_x_axis()
+        .y_desc("win rate")
+        .y_label_formatter(&|y| format!("{:.0}%", 100.0 * y))
+        .light_line_style(RGBColor(235, 235, 235))
+        .draw()
+        .map_err(draw_err)?;
+    // the coin flip line
+    chart
+        .draw_series(LineSeries::new(
+            vec![(0.0, 0.5), (n as f64, 0.5)],
+            GREY.stroke_width(1),
+        ))
+        .map_err(draw_err)?;
+    for (i, b) in bars.iter().enumerate() {
+        let x0 = i as f64 + 0.15;
+        let x1 = i as f64 + 0.85;
+        chart
+            .draw_series(std::iter::once(Rectangle::new(
+                [(x0, lo), (x1, b.win)],
+                BLUE.mix(0.75).filled(),
+            )))
+            .map_err(draw_err)?;
+        // the break even win rate as a red mark across the bar
+        chart
+            .draw_series(LineSeries::new(
+                vec![(x0 - 0.05, b.breakeven), (x1 + 0.05, b.breakeven)],
+                RED.stroke_width(3),
+            ))
+            .map_err(draw_err)?;
+        let (px, py) = chart.backend_coord(&(i as f64 + 0.5, lo));
+        let style = ("sans-serif", 14)
+            .into_font()
+            .color(&BLACK)
+            .pos(Pos::new(HPos::Center, VPos::Top));
+        root.draw(&Text::new(b.label.clone(), (px, py + 6), style.clone()))
+            .map_err(draw_err)?;
+        root.draw(&Text::new(format!("n {}", b.trades), (px, py + 22), style))
+            .map_err(draw_err)?;
+    }
+    root.present().map_err(draw_err)
+}
+
 pub fn draw_importance(
     path: &Path,
     title: &str,
@@ -546,6 +642,20 @@ mod tests {
     }
 
     #[test]
+    fn winrate_bars_drop_groups_without_a_value() {
+        let rows = vec![
+            ("5m fold 1".to_string(), 0.488, 0.555, 1077),
+            ("empty".to_string(), f64::NAN, 0.53, 0),
+            ("15m all".to_string(), 0.48, 0.519, 2764),
+        ];
+        let b = winrate_bars(&rows);
+        assert_eq!(b.len(), 2);
+        assert_eq!(b[0].label, "5m fold 1");
+        assert_eq!(b[1].trades, 2764);
+        assert!(winrate_bars(&[]).is_empty());
+    }
+
+    #[test]
     fn curves_pair_bins_with_class_names() {
         let c = curves(
             &[vec![(0.1, 0.2, 5)], vec![]],
@@ -589,7 +699,12 @@ mod tests {
             1,
         );
         draw_beeswarm(&dir.join("b.png"), "beeswarm", &sw, size).unwrap();
-        for f in ["r", "e", "i", "b"] {
+        let wb = winrate_bars(&[
+            ("a".to_string(), 0.48, 0.53, 100),
+            ("b".to_string(), 0.5, 0.52, 90),
+        ]);
+        draw_winrate(&dir.join("w.png"), "win rate", &wb, size).unwrap();
+        for f in ["r", "e", "i", "b", "w"] {
             assert!(
                 std::fs::metadata(dir.join(format!("{f}.png")))
                     .unwrap()
