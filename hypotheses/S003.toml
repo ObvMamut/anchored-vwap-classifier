@@ -1,0 +1,5 @@
+id = "S003"
+kind = "strategy"
+mechanism = "LightGBM multiclass on all features with a small pre registered grid and rounds chosen by inner folds, calibrated, rejection traded above a threshold tuned on out of fold probabilities"
+model = "lgbm"
+timeframes = [5, 15]

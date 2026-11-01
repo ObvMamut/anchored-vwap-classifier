@@ -1,0 +1,5 @@
+id = "S001"
+kind = "strategy"
+mechanism = "base rate benchmark: predict the training class frequencies for every touch, tune the threshold on them, and trade rejection where the tuned threshold earns a positive lower bound"
+model = "majority"
+timeframes = [5, 15]
