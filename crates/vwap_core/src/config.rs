@@ -64,6 +64,10 @@ impl TryFrom<String> for HhMm {
 #[serde(deny_unknown_fields)]
 pub struct DataConfig {
     pub input_path: String,
+    /// SHA256 of the raw file. When set, `data clean` refuses a file that differs, so every
+    /// recorded result stays tied to one dataset.
+    #[serde(default)]
+    pub input_sha256: Option<String>,
     pub output_dir: String,
     pub artifact_dir: String,
     pub timestamp_kind: TimestampKind,

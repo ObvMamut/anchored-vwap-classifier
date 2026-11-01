@@ -76,6 +76,16 @@ pub enum Entry {
         verdict: Verdict,
         time_utc: String,
     },
+    /// The single run on the holdout segment.
+    Holdout {
+        card_id: String,
+        sha256: String,
+        git_commit: String,
+        delta: f64,
+        p: f64,
+        verdict: Verdict,
+        time_utc: String,
+    },
     /// A descriptive analysis that spends no alpha and cannot promote anything.
     Diagnostic {
         name: String,
@@ -163,11 +173,27 @@ impl Ledger {
         Ok(omni.min(1) + self.cards_run()?.len())
     }
 
+    /// Cards whose last discovery verdict is PROMOTE.
+    pub fn promoted_cards(&self) -> Result<Vec<String>, ResearchError> {
+        let mut out = Vec::new();
+        for id in self.cards_run()? {
+            if self.verdict_of(&id)? == Some(Verdict::Promote) {
+                out.push(id);
+            }
+        }
+        Ok(out)
+    }
+
     pub fn next_cycle(&self) -> Result<usize, ResearchError> {
         Ok(self
             .read_all()?
             .iter()
-            .filter(|e| !matches!(e, Entry::Registered { .. } | Entry::Diagnostic { .. }))
+            .filter(|e| {
+                !matches!(
+                    e,
+                    Entry::Registered { .. } | Entry::Diagnostic { .. } | Entry::Holdout { .. }
+                )
+            })
             .count()
             + 1)
     }

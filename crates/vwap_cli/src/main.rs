@@ -1,6 +1,7 @@
 //! The `vwap` binary: one subcommand per pipeline stage.
 
 mod ctx;
+mod ops;
 mod research;
 mod stages;
 
@@ -45,6 +46,21 @@ enum Command {
         #[command(subcommand)]
         stage: ResearchStage,
     },
+    /// The single, locked run on the holdout segment.
+    Holdout {
+        #[command(subcommand)]
+        stage: HoldoutStage,
+    },
+    /// Preflight checks: configuration, data checksum, toolchain, disk, git.
+    Doctor { config: PathBuf },
+    /// Run the deterministic stages in order (not the alpha spending research runs).
+    Pipeline { config: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum HoldoutStage {
+    /// Needs research/FREEZE.toml and a confirmed card; runs once.
+    Run { config: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -87,13 +103,23 @@ enum ResearchStage {
     Omnibus { config: PathBuf },
     /// Descriptive decomposition of the omnibus by outcome (spends no alpha).
     Diagnose { config: PathBuf },
+    /// One shot confirmation of a promoted card on the confirmation segment.
+    Confirm { id: String, config: PathBuf },
     /// Check the ledger against the protocol and the repository.
     Verify { config: PathBuf },
     /// Recompute a card (or `all`) and compare with the recorded result.
     Replay { id: String, config: PathBuf },
 }
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(e) = run() {
+        // a clear message and a non zero exit code, without a backtrace
+        eprintln!("error: {e:#}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
     let text = match cli.command {
         Command::Data { stage } => match stage {
@@ -111,12 +137,18 @@ fn main() -> Result<()> {
             stage: BaselinesStage::Run { config },
         } => stages::baselines_run(&config)?,
         Command::Spotcheck { config } => stages::spotcheck(&config)?,
+        Command::Doctor { config } => ops::doctor(&config)?,
+        Command::Pipeline { config } => ops::pipeline(&config)?,
+        Command::Holdout {
+            stage: HoldoutStage::Run { config },
+        } => research::holdout(&config)?,
         Command::Research { stage } => match stage {
             ResearchStage::Register { id, config } => research::register(&id, &config)?,
             ResearchStage::Run { id, config } => research::run(&id, &config)?,
             ResearchStage::Status { config } => research::status(&config)?,
             ResearchStage::Omnibus { config } => research::omnibus(&config)?,
             ResearchStage::Diagnose { config } => research::diagnose(&config)?,
+            ResearchStage::Confirm { id, config } => research::confirm(&id, &config)?,
             ResearchStage::Verify { config } => research::verify(&config)?,
             ResearchStage::Replay { id, config } => research::replay(&id, &config)?,
         },

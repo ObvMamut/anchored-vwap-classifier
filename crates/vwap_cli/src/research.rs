@@ -85,6 +85,33 @@ pub fn diagnose(config: &Path) -> Result<String> {
     Ok(serde_json::to_string_pretty(&r)?)
 }
 
+/// One shot confirmation of a promoted card on the confirmation segment.
+pub fn confirm(id: &str, config: &Path) -> Result<String> {
+    let cfg = vwap_core::load_research_config(config)?;
+    guard_ledger(&cfg)?;
+    let (path, commit) = committed_card(&cfg, id)?;
+    let (s, _, _) = samples(config)?;
+    let r = vwap_research::cycle::execute_confirm(&cfg, &path, &commit, &s)?;
+    Ok(serde_json::to_string_pretty(&r)?)
+}
+
+/// The single run on the holdout. Needs research/FREEZE.toml and a confirmed card.
+pub fn holdout(config: &Path) -> Result<String> {
+    let cfg = vwap_core::load_research_config(config)?;
+    guard_ledger(&cfg)?;
+    ensure!(
+        git(&["status", "--porcelain"])?.is_empty(),
+        "the git tree must be clean before the holdout run, so the run is tied to a commit"
+    );
+    let freeze = Path::new(&cfg.ledger_path).parent().map_or_else(
+        || Path::new("FREEZE.toml").to_path_buf(),
+        |d| d.join("FREEZE.toml"),
+    );
+    let (s, _, _) = samples(config)?;
+    let r = vwap_research::cycle::execute_holdout(&cfg, &freeze, &head(), &s)?;
+    Ok(serde_json::to_string_pretty(&r)?)
+}
+
 /// Structure of the ledger plus a check that every commit it names exists.
 pub fn verify(config: &Path) -> Result<String> {
     let cfg = vwap_core::load_research_config(config)?;

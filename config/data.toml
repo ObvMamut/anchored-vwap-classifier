@@ -1,4 +1,6 @@
 input_path = "data.parquet"
+# Pinned so that every recorded result stays tied to this exact file.
+input_sha256 = "e792ee92659a2878dbd3f019a0d526b36dd94088b371ab6ad1a2afe240c12e0b"
 output_dir = "data/clean"
 artifact_dir = "artifacts/data"
 # How the DateTime column relates to real time. The file was found to be broker

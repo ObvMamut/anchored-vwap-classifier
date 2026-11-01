@@ -39,6 +39,15 @@ pub struct CleanSummary {
 /// The whole Phase 1 stage: load, clean, check, flag rolls, write.
 pub fn run_clean(cfg: &DataConfig) -> Result<CleanSummary, DataError> {
     let input = Path::new(&cfg.input_path);
+    if let Some(expected) = &cfg.input_sha256 {
+        let found = write::sha256_file(input)?;
+        if &found != expected {
+            return Err(DataError::Validation(format!(
+                "{} has SHA256 {found} but config/data.toml pins {expected}; refusing to clean a different dataset",
+                input.display()
+            )));
+        }
+    }
     let raw = read_raw(input)?;
     let (mut bars, counts) = clean::clean(&raw, cfg)?;
     let mut quality = quality::analyze(&mut bars, cfg)?;

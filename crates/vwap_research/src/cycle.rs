@@ -11,9 +11,9 @@ use crate::card::load_card;
 use crate::error::ResearchError;
 use crate::ledger::{Entry, Ledger, Verdict};
 use crate::report::render;
-use crate::runner::{CardResult, run_card};
+use crate::runner::{CardResult, decide_confirm, run_card, run_card_with};
 use crate::selftest::selftest;
-use crate::split::{Bounds, DiscoveryView, Sample};
+use crate::split::{Bounds, ConfirmView, DiscoveryView, HoldoutPermit, HoldoutView, Sample};
 
 fn now() -> String {
     chrono::Utc::now().to_rfc3339()
@@ -252,6 +252,17 @@ pub fn status(cfg: &ResearchConfig) -> Result<String, ResearchError> {
             } => s.push_str(&format!(
                 "cycle {cycle}: {card_id} confirmation: delta {delta:.4}, p {p:.4}, {verdict:?}\n"
             )),
+            Entry::Holdout {
+                card_id,
+                delta,
+                p,
+                verdict,
+                ..
+            } => {
+                s.push_str(&format!(
+                    "holdout: {card_id}: delta {delta:.4}, p {p:.4}, {verdict:?}\n"
+                ));
+            }
             Entry::Diagnostic { name, note, .. } => {
                 s.push_str(&format!("diagnostic {name}: {note}\n"));
             }
@@ -372,6 +383,7 @@ pub fn verify(cfg: &ResearchConfig) -> Result<VerifyReport, ResearchError> {
                     problems.push(format!("{card_id} was confirmed without a PROMOTE verdict"));
                 }
             }
+            Entry::Holdout { git_commit, .. } => commits.push(git_commit.clone()),
             Entry::Diagnostic { git_commit, .. } => commits.push(git_commit.clone()),
         }
     }
@@ -597,5 +609,288 @@ mod verify_tests {
         let p = verify(&cfg).unwrap().problems;
         assert!(p.iter().any(|x| x.contains("without being registered")));
         assert!(p.iter().any(|x| x.contains("confirmed without a PROMOTE")));
+    }
+}
+
+/// The cut points a card used on discovery, per timeframe. Confirmation and holdout reuse them.
+fn discovery_cuts(
+    card: &crate::card::Card,
+    cfg: &ResearchConfig,
+    samples: &[Sample],
+) -> std::collections::BTreeMap<u32, f64> {
+    let view = DiscoveryView::select(samples, &Bounds::from_config(cfg));
+    run_card(card, view.samples(), cfg)
+        .widths
+        .iter()
+        .filter_map(|w| w.cut_points.first().map(|c| (w.width, *c)))
+        .collect()
+}
+
+fn write_report(cfg: &ResearchConfig, name: &str, text: &str) -> Result<(), ResearchError> {
+    let dir = Path::new(&cfg.report_dir);
+    fs::create_dir_all(dir).map_err(|source| ResearchError::Io {
+        path: dir.display().to_string(),
+        source,
+    })?;
+    let rp = dir.join(name);
+    fs::write(&rp, text).map_err(|source| ResearchError::Io {
+        path: rp.display().to_string(),
+        source,
+    })
+}
+
+fn registered_card(
+    cfg: &ResearchConfig,
+    ledger: &Ledger,
+    card_path: &Path,
+) -> Result<(crate::card::Card, String), ResearchError> {
+    let (card, hash) = load_card(card_path)?;
+    card.validate(feature_names())?;
+    match ledger.registered_hash(&card.id)? {
+        None => Err(ResearchError::NotRegistered { id: card.id }),
+        Some(h) if h != hash => Err(ResearchError::CardChanged {
+            id: card.id,
+            registered: h,
+            current: hash,
+        }),
+        Some(_) => {
+            let _ = cfg;
+            Ok((card, hash))
+        }
+    }
+}
+
+/// One shot confirmation of a promoted card on the confirmation segment, with the cut points
+/// frozen on discovery. The confirmation alpha is the total alpha shared Bonferroni style over
+/// the promoted cards.
+pub fn execute_confirm(
+    cfg: &ResearchConfig,
+    card_path: &Path,
+    git_commit: &str,
+    samples: &[Sample],
+) -> Result<CardResult, ResearchError> {
+    selftest(cfg)?;
+    let ledger = Ledger::open(Path::new(&cfg.ledger_path));
+    let (card, hash) = registered_card(cfg, &ledger, card_path)?;
+    let permit = ledger.confirm_permit(&card.id)?;
+    let promoted = ledger.promoted_cards()?.len().max(1);
+    let alpha = cfg.alpha_total / promoted as f64;
+    let cuts = discovery_cuts(&card, cfg, samples);
+    let bounds = Bounds::from_config(cfg);
+    let view = ConfirmView::select(samples, &bounds, &permit);
+    if view.samples().len() < cfg.min_discovery_samples / 5 {
+        return Err(ResearchError::NotEnoughData(format!(
+            "only {} confirmation samples",
+            view.samples().len()
+        )));
+    }
+    let mut result = run_card_with(&card, view.samples(), cfg, &cuts, Some(alpha));
+    let (verdict, reasons, p) = decide_confirm(&card, &result.widths, alpha, cfg);
+    result.verdict = verdict;
+    result.reasons = reasons;
+    result.p = p;
+    write_report(
+        cfg,
+        &format!("{}_confirm.md", card.id),
+        &render(&card, &result, "confirmation"),
+    )?;
+    ledger.append(&Entry::Confirm {
+        cycle: ledger.next_cycle()?,
+        card_id: card.id.clone(),
+        sha256: hash,
+        git_commit: git_commit.to_string(),
+        delta: result.delta,
+        p: result.p,
+        verdict: result.verdict,
+        time_utc: now(),
+    })?;
+    Ok(result)
+}
+
+/// The freeze file naming the one strategy allowed onto the holdout.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Freeze {
+    pub card_id: String,
+    pub note: String,
+}
+
+/// The single run on the holdout segment. It needs a freeze file, a confirmed card and an unused
+/// lock, and it creates the lock before computing anything.
+pub fn execute_holdout(
+    cfg: &ResearchConfig,
+    freeze_path: &Path,
+    git_commit: &str,
+    samples: &[Sample],
+) -> Result<CardResult, ResearchError> {
+    let text = fs::read_to_string(freeze_path).map_err(|_| {
+        ResearchError::HoldoutLocked(format!(
+            "{} does not exist; the holdout needs a freeze file naming a confirmed card",
+            freeze_path.display()
+        ))
+    })?;
+    let freeze: Freeze = toml::from_str(&text).map_err(|source| ResearchError::Toml {
+        path: freeze_path.display().to_string(),
+        source,
+    })?;
+    let ledger = Ledger::open(Path::new(&cfg.ledger_path));
+    let entries = ledger.read_all()?;
+    let confirmed = entries.iter().any(|e| {
+        matches!(e, Entry::Confirm { card_id, verdict: Verdict::Confirmed, .. } if *card_id == freeze.card_id)
+    });
+    if !confirmed {
+        return Err(ResearchError::HoldoutLocked(format!(
+            "{} has no Confirmed entry in the ledger",
+            freeze.card_id
+        )));
+    }
+    if entries.iter().any(|e| matches!(e, Entry::Holdout { .. })) {
+        return Err(ResearchError::HoldoutLocked(
+            "the holdout was already run".into(),
+        ));
+    }
+    selftest(cfg)?;
+    let card_path = Path::new(&cfg.cards_dir).join(format!("{}.toml", freeze.card_id));
+    let (card, hash) = registered_card(cfg, &ledger, &card_path)?;
+    let lock = Path::new(&cfg.ledger_path).parent().map_or_else(
+        || Path::new("holdout.lock").to_path_buf(),
+        |d| d.join("holdout.lock"),
+    );
+    let permit = HoldoutPermit::acquire(
+        &lock,
+        &format!("{} at {git_commit}: {}", freeze.card_id, freeze.note),
+    )?;
+    let cuts = discovery_cuts(&card, cfg, samples);
+    let view = HoldoutView::select(samples, &Bounds::from_config(cfg), &permit);
+    let mut result = run_card_with(&card, view.samples(), cfg, &cuts, Some(cfg.alpha_total));
+    let (verdict, reasons, p) = decide_confirm(&card, &result.widths, cfg.alpha_total, cfg);
+    result.verdict = verdict;
+    result.reasons = reasons;
+    result.p = p;
+    write_report(
+        cfg,
+        &format!("{}_holdout.md", card.id),
+        &render(&card, &result, "holdout"),
+    )?;
+    ledger.append(&Entry::Holdout {
+        card_id: card.id.clone(),
+        sha256: hash,
+        git_commit: git_commit.to_string(),
+        delta: result.delta,
+        p: result.p,
+        verdict: result.verdict,
+        time_utc: now(),
+    })?;
+    Ok(result)
+}
+
+#[cfg(test)]
+mod confirm_tests {
+    use super::*;
+    use crate::selftest::synthetic_samples;
+
+    fn setup(name: &str) -> (ResearchConfig, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("vwap_confirm_{name}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("cards")).unwrap();
+        let mut c = vwap_core::load_research_config(Path::new("../../config")).unwrap();
+        c.ledger_path = dir.join("ledger.jsonl").display().to_string();
+        c.cards_dir = dir.join("cards").display().to_string();
+        c.report_dir = dir.join("reports").display().to_string();
+        c.selftest_null_trials = 6;
+        c.bootstrap_draws = 400;
+        (c, dir)
+    }
+
+    const CARD: &str = "id = \"T1\"\nfamily = \"regime\"\nmechanism = \"a planted effect used to test the whole loop\"\noutcome = \"rejection_given_resolved\"\nfeature = \"vslope_align\"\nrule = \"top_tercile\"\ndirection = \"positive\"\ntimeframes = [5, 15]\n";
+
+    /// Planted samples placed in the three segments of the split.
+    fn segments(cfg: &ResearchConfig, effect: f64) -> Vec<Sample> {
+        let b = Bounds::from_config(cfg);
+        let mut out = Vec::new();
+        for (k, start) in [b.discovery_start, b.confirm_start, b.holdout_start]
+            .into_iter()
+            .enumerate()
+        {
+            let mut s = synthetic_samples(effect, 700, 5, 100 + k as u64);
+            for (i, x) in s.iter_mut().enumerate() {
+                x.t_close_us = start + 3_600_000_000 * (i as i64 % 1000);
+                x.t_end_us = x.t_close_us + 3_600_000_000;
+                x.session += 10_000 * k as i32;
+            }
+            out.extend(s);
+        }
+        out
+    }
+
+    #[test]
+    fn promote_then_confirm_then_one_holdout_run() {
+        let (cfg, dir) = setup("flow");
+        let card_path = dir.join("cards/T1.toml");
+        fs::write(&card_path, CARD).unwrap();
+        let samples = segments(&cfg, 0.10);
+        register(&cfg, &card_path, "c0").unwrap();
+        let r = execute(&cfg, &card_path, "c1", "fp", &samples).unwrap();
+        assert_eq!(r.verdict, Verdict::Promote, "{:?}", r.reasons);
+
+        // holdout needs a freeze file and a confirmed card
+        let freeze = dir.join("FREEZE.toml");
+        assert!(execute_holdout(&cfg, &freeze, "c2", &samples).is_err());
+        fs::write(&freeze, "card_id = \"T1\"\nnote = \"test\"\n").unwrap();
+        assert!(execute_holdout(&cfg, &freeze, "c2", &samples).is_err()); // not confirmed yet
+
+        let c = execute_confirm(&cfg, &card_path, "c3", &samples).unwrap();
+        assert_eq!(c.verdict, Verdict::Confirmed, "{:?}", c.reasons);
+        // confirmation is one shot
+        assert!(execute_confirm(&cfg, &card_path, "c3", &samples).is_err());
+
+        let h = execute_holdout(&cfg, &freeze, "c4", &samples).unwrap();
+        assert_eq!(h.verdict, Verdict::Confirmed, "{:?}", h.reasons);
+        // the holdout runs once
+        assert!(matches!(
+            execute_holdout(&cfg, &freeze, "c5", &samples),
+            Err(ResearchError::HoldoutLocked(_))
+        ));
+        // and the whole record still verifies
+        let v = verify(&cfg).unwrap();
+        assert!(v.problems.is_empty(), "{:?}", v.problems);
+    }
+
+    #[test]
+    fn a_card_that_is_not_promoted_cannot_be_confirmed() {
+        let (cfg, dir) = setup("noprom");
+        let card_path = dir.join("cards/T1.toml");
+        fs::write(&card_path, CARD).unwrap();
+        let samples = segments(&cfg, 0.0);
+        register(&cfg, &card_path, "c0").unwrap();
+        let r = execute(&cfg, &card_path, "c1", "fp", &samples).unwrap();
+        assert_ne!(r.verdict, Verdict::Promote);
+        assert!(matches!(
+            execute_confirm(&cfg, &card_path, "c2", &samples),
+            Err(ResearchError::ConfirmNotAllowed(_))
+        ));
+    }
+
+    #[test]
+    fn a_confirmation_does_not_pass_when_the_effect_disappears_out_of_sample() {
+        let (cfg, dir) = setup("fade");
+        let card_path = dir.join("cards/T1.toml");
+        fs::write(&card_path, CARD).unwrap();
+        let b = Bounds::from_config(&cfg);
+        let mut samples = segments(&cfg, 0.10);
+        // replace the confirmation segment with a null one
+        samples.retain(|s| s.t_close_us < b.confirm_start || s.t_close_us >= b.holdout_start);
+        let mut null = synthetic_samples(0.0, 700, 5, 777);
+        for (i, x) in null.iter_mut().enumerate() {
+            x.t_close_us = b.confirm_start + 3_600_000_000 * (i as i64 % 1000);
+            x.t_end_us = x.t_close_us + 3_600_000_000;
+            x.session += 50_000;
+        }
+        samples.extend(null);
+        register(&cfg, &card_path, "c0").unwrap();
+        let r = execute(&cfg, &card_path, "c1", "fp", &samples).unwrap();
+        assert_eq!(r.verdict, Verdict::Promote);
+        let c = execute_confirm(&cfg, &card_path, "c2", &samples).unwrap();
+        assert_eq!(c.verdict, Verdict::NotConfirmed);
     }
 }
