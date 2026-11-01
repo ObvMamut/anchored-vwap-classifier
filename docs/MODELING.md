@@ -1,8 +1,6 @@
 # Modeling
 
-> **Status: specification only, not implemented.** Deferred because the research did not pass gate 3b (see `DECISIONS.md`, section 14): there is no directional signal to model or trade on this data. The design is kept so the stage can be built if a hypothesis is promoted or a better data source is found.
-
-Owner crate: `vwap_model` (never built). `config/model.toml` today holds only the fixed LightGBM settings of the omnibus screen in `vwap_research`. Symbols: `GLOSSARY.md`. Splits and the experiment log are in `VALIDATION.md`.
+> **Status.** Implemented in `crates/vwap_model`, driven by `vwap research strategy` (see `PROTOCOL.md`, section 12). Where the implementation differs from the design below, section 9 says so. Configuration: `config/strategy.toml` (models, calibration, threshold) and `config/validation.toml` (folds, inner blocks, gate limits). Symbols: `GLOSSARY.md`. Splits and trial counting are in `VALIDATION.md`.
 
 ## 1. Models, in this order
 
@@ -111,3 +109,19 @@ $$ \phi_0 + \sum_{f=1}^{F}\phi_f = \text{raw score} $$
 * SHAP additivity (section 7) on a fixed small model.
 * Determinism: two fits with the same seed give identical probabilities bit for bit.
 * Nested scheme: no inner training event has a label span reaching its validation block's first event plus embargo, and no outer test event is ever visible to any inner fold.
+
+## 9. Implementation notes and deviations
+
+What was built, and where it differs from sections 1 to 8.
+
+1. **Majority and logistic.** The logistic model is `linfa-logistic` (multinomial, L2, penalty from `logistic_l2_grid`, chosen by the inner folds). Inputs are prepared on the training window only: every column with at least one missing value gets a missing indicator column and a median imputation (the design said a share above 1 percent; any missing value is simpler and costs nothing), values are winsorised at the 1st and 99th percentile and standardised.
+2. **LightGBM.** The pre registered grid of 8 points is in `strategy.toml`. The number of rounds is not found by early stopping on a validation set. One booster per grid point and inner fold is trained for `lgbm_max_rounds` (300) and scored every `lgbm_round_step` (10) rounds, and the pair (grid point, rounds) with the lowest block size weighted out of fold log loss is selected. Settings are deterministic: one thread, row wise histograms, every seed derived from the master seed.
+3. **Nested scheme.** As in section 2, except that `calibration_order = "chronological"` was not built. The calibrator for block $k$ is always fit on the out of fold predictions of all the other blocks, after removing the events whose span plus the embargo overlaps block $k$.
+4. **Calibration.** Isotonic regression (pool adjacent violators, linear interpolation, clamping and clipping to $[10^{-6}, 1 - 10^{-6}]$) when the calibration sample has at least `isotonic_min_events` (1000) events, Platt scaling by Newton iterations with target smoothing otherwise. One versus rest, then rows are renormalised.
+5. **Threshold.** As in section 5, with $\kappa$ taken from `backtest.toml` (1 tick of slippage and 2 USD of commission per side, 2.8 ticks). One deviation, on by default (`tau_require_positive_lcb`): a fold abstains unless its best threshold has a bootstrap lower bound above zero. Without it a useless model still trades at its least bad threshold, which only adds noise to the Sharpe ratios that feed the DSR. A synthetic test shows the effect.
+6. **Gate.** Section 6 is applied to each (strategy, timeframe) as follows, and the verdict lists every failed condition. In more than half of the outer folds: $\mathrm{BSS} > 0$ against the training frequencies of the same fold, and rejection precision at that fold's $\tau$ above the base rate of the fold (a fold that abstained fails). Pooled over the folds: the session clustered bootstrap interval of the $\mathrm{BSS}$ excludes zero, and the expected calibration error of every class is at most `max_ece` (the pooled reliability diagram, as the design says, not each fold on its own). The economic conditions and the DSR and PBO are in `BACKTEST.md`, section 6.
+7. **Reliability diagrams.** Pooled quantile bins per class, without bootstrap bands. The bands were not built.
+8. **TreeSHAP.** `crates/vwap_model/src/shap.rs`, exact path dependent TreeSHAP in safe Rust from the text model, because `lightgbm3` 1.0.11 sizes the multiclass `predict_contrib` buffer wrongly (`DECISIONS.md`, section 7). It agrees with LightGBM's own `predict_contrib` on a binary model to $10^{-9}$ (missing values and exact zeros included), and on a multiclass model the contributions and the bias add up to the raw score of every class to $10^{-9}$. The logistic model is explained exactly by coefficient times standardised value. Summaries keep the mean absolute contribution per class and feature, the stability across folds (mean Spearman rank correlation and the mean overlap of the top 5), and a thin sample of events (`contrib_rows_per_fold`) for the beeswarm.
+9. **Not built.** The grouped importance totals (approach, volume, context, levels, regime) and the flag for features that are important in few folds.
+10. **Tests.** Isotonic and Platt (reference examples, monotone fit, weighted mean preserved, planted Platt parameters recovered), Brier, log loss and ECE against hand values, the majority forecast, probabilities that sum to one, determinism (two fits give identical bits), the nested scheme end to end on synthetic data (a planted signal beats the majority and noise does not, a too small window is an error, no threshold on noise), TreeSHAP as in item 8.
+

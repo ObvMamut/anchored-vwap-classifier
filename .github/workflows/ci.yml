@@ -56,8 +56,12 @@ jobs:
         run: ./target/release/vwap pipeline config
       - name: Verify the research ledger
         run: ./target/release/vwap research verify config
-      - name: Replay every recorded hypothesis card
+      - name: Replay every recorded hypothesis card and strategy run
         run: ./target/release/vwap research replay all config
+      - name: DSR and PBO of the recorded strategy trials
+        run: ./target/release/vwap research dsr config
+      - name: Build the report and the plots
+        run: ./target/release/vwap report build config
 
   proptest:
     name: nightly property tests

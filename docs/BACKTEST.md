@@ -1,8 +1,8 @@
 # Backtest
 
-> **Status: specification only, not implemented.** Deferred because the research did not pass gate 3b (see `DECISIONS.md`, section 14): there is no directional signal to model or trade on this data. The design is kept so the stage can be built if a hypothesis is promoted or a better data source is found.
+> **Status.** Implemented in `crates/vwap_backtest`, run inside `vwap research strategy`. Section 9 lists what differs from this design. Configuration: `config/backtest.toml`. Symbols: `GLOSSARY.md`.
 
-Owner crate: `vwap_backtest`. Config: `config/backtest.toml`. Symbols: `GLOSSARY.md`.
+Owner crate: `vwap_backtest`.
 
 The backtest takes the walk forward outer test predictions (never training data), applies the trade rule, simulates fills with costs, and reports. It is the authority on economic value. The label proxy used for tuning $\tau$ in `MODELING.md` is not.
 
@@ -95,3 +95,14 @@ If the gate fails, the pipeline stops: no holdout run. The report states the fai
 * One position at a time: no two trades overlap in time; a signal during a trade is skipped and counted.
 * Metric formulas against hand computed series (profit factor, drawdown, Sharpe).
 * Property: with slippage and commission set to zero and every signal taken, the sum of net ticks equals the sum of label outcomes up to the entry difference (open versus close), within a tolerance.
+
+## 9. Implementation notes and deviations
+
+1. **Barrier scan.** The label stage and the backtest call one function, `vwap_labels::scan_barriers`, so the two cannot drift apart. The label files are bit for bit identical to those written before the function was extracted. A property test shows that, with no costs and an entry at the touch close, the gross result of a trade equals the label outcome of the same event.
+2. **Gap rule, generalised.** A stop fills at the worse of its barrier and the open of the bar in which it is hit, a target at the better of its barrier and that open. The design only named the open of bar $t + 1$. A trade that gaps through its stop at the entry open enters and exits at the same price and loses only the costs. The exit time of a barrier exit is the close of the resolving coarse bar.
+3. **Position policies.** `one_at_a_time` (a signal at exactly the close of the exit bar is taken), `one_per_session` and `overlap`, as an enum in the configuration. The headline numbers use the configured one, `one_at_a_time` by default. The three are not reported side by side.
+4. **Costs and the sweep.** Net ticks are $\text{gross} - 2 n_{\text{slip}} - 2 c_{\text{usd}} / 5$. Barrier hits do not depend on the costs, so the sweep recomputes the net expectancy over the grid of `sweep_slippage` and `sweep_commission` from the same trades (the threshold is not re tuned). The break even slippage is the exact value $(\bar g - 2 c_{\text{usd}}/5)/2$ in ticks per side, with $\bar g$ the mean gross ticks.
+5. **Metrics.** Trade count, expectancy with a session clustered bootstrap interval, hit rate, profit factor, daily Sharpe ratio (zero on days without trades, annualised with $\sqrt{252}$ for display only), maximum drawdown on the cumulative USD equity, mean bars held, mean MAE, and the exit mix with the gap and ambiguous counts. The daily net USD series is stored in the strategy summary and feeds the DSR and the PBO.
+6. **Gate (section 6) as applied.** Net expectancy positive in at least `min_fold_fraction` (0.6) of the outer folds (a fold without trades counts as not positive), a pooled lower bound above zero (session clustered bootstrap, two sided level `interval_level`), the net expectancy at 2 ticks of slippage per side positive (required, where the design allowed the owner to accept the break even slippage instead), and DSR and PBO within their limits (`VALIDATION.md`).
+7. **Not built.** The per trade log `artifacts/backtest/trades.parquet`, the command `vwap backtest run`, the comparison of the model implied expected value with the realised expectancy, and the breakdowns by year, volatility tercile, side and time of day. The strategy summary in `research/strategies/` keeps the per fold results, the pooled metrics, the sweep, the break even slippage and the daily series, which is what the gates and the report need.
+

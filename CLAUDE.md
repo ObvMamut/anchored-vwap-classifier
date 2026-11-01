@@ -8,17 +8,17 @@ Conventions for anyone (human or agent) working in this repository. Read this fi
 2. Event: a 5 or 15 minute bar whose range contains the daily anchored VWAP (a "touch").
 3. Label: REJECTION, BREAKTHROUGH or CHOP from a volatility scaled triple barrier.
 4. Question: do features known at the touch predict the class, with an edge that survives costs?
-5. Status: the pipeline and the research protocol are built and the research is finished with a negative result (gate 3b not passed, nothing promoted). See `docs/DECISIONS.md`, sections 13 and 14.
+5. Status: everything specified is built (pipeline, research protocol, calibrated models, walk forward validation, backtest, DSR and PBO, report, calendar snapshot). The research is finished with a negative result: gate 3b not passed, three baseline strategies on both timeframes made no trades, nothing promoted. See `docs/DECISIONS.md`, sections 13, 14 and 16.
 
 ## Hard rules
 
 1. **No lookahead anywhere.** See the operational definition below. Every feature function and every label function has a proptest that alters future bars and asserts the output is unchanged.
-2. **No tuning on confirmation or holdout data.** The research protocol (`docs/PROTOCOL.md`) is enforced in code by `vwap_research`: runs read the discovery view only, confirmation is one shot per promoted card, the holdout runs once.
+2. **No tuning on confirmation or holdout data.** The research protocol (`docs/PROTOCOL.md`) is enforced in code by `vwap_research`: runs read the discovery view only, confirmation is one shot per promoted card or strategy, the holdout runs once.
 3. **All parameters live in `config/*.toml`**, deserialised with serde into typed structs in `crates/vwap_core/src/config.rs`. No magic numbers in code.
 4. **Never compute VWAP on back adjusted prices.** Prices are never adjusted anywhere in the pipeline.
 5. **No Python anywhere in the pipeline or the repository.**
-6. **The research audit trail is tracked.** `research/ledger.jsonl` and `research/reports/` are committed, append only, and never edited by hand. A change to a result needs a new card, not a rewrite.
-7. **Results must stay reproducible.** `vwap research replay all config` must keep reproducing every recorded card. A change that breaks it is a behaviour change and needs a new study, not a silent edit.
+6. **The research audit trail is tracked.** `research/ledger.jsonl`, `research/reports/`, `research/strategies/` and `research/calendar/` are committed, append only, and never edited by hand. A change to a result needs a new card, not a rewrite.
+7. **Results must stay reproducible.** `vwap research replay all config` must keep reproducing every recorded card and strategy run, and `vwap research verify config` must pass. A change that breaks either, including a change to `strategy.toml`, `validation.toml` or `backtest.toml`, is a behaviour change and needs a new study, not a silent edit.
 
 ## The no lookahead rule, operationally
 
@@ -33,25 +33,27 @@ Conventions for anyone (human or agent) working in this repository. Read this fi
 
 ```
 Cargo.toml  rust-toolchain.toml  rustfmt.toml  README.md  LICENSE  CLAUDE.md
-config/   data events labels features baselines research model (.toml)
+config/   data events labels features baselines research model validation strategy
+          backtest report calendar (.toml)
 crates/   vwap_core        typed config, small enums, constants, errors, manifests
           vwap_data        load, clean, roll table, quality report, yearly parquet
           vwap_events      anchored VWAP, ATR, bar sampling, touch detection
           vwap_labels      triple barrier labels, MAE, time to barrier
-          vwap_features    18 features, CausalView, level table
+          vwap_features    34 features, CausalView, level table, calendar table
           vwap_validation  purged walk forward, DSR, PBO, normal and chi square maths
           vwap_dataset     the joined sample table, parquet export of features
           vwap_model       metrics, isotonic and Platt calibration, majority and logistic models
           vwap_backtest    next bar open fills, barrier exits, costs, metrics, cost sweep
+          vwap_calendar    release schedule snapshot (the only crate that uses the network)
           vwap_baselines   control levels, bootstrap, gate 3a
-          vwap_research    the research protocol: views, cards, ledger, omnibus
-          vwap_report      plotters spot check charts
-          vwap_cli         the vwap binary (ctx, stages, research, ops)
+          vwap_research    the research protocol: views, cards, ledger, omnibus, strategies
+          vwap_report      plotters charts: spot check, reliability, equity, importance, beeswarm
+          vwap_cli         the vwap binary (ctx, stages, research, report, calendar, ops)
           vwap_testkit     synthetic data for tests (dev dependency only)
 docs/     ARCHITECTURE DATA EVENTS LABELING FEATURES BASELINES MODELING VALIDATION
           BACKTEST ROADMAP DECISIONS GLOSSARY PROTOCOL OPERATIONS
-hypotheses/   one TOML card per hypothesis
-research/     ledger.jsonl and reports/ (tracked audit trail)
+hypotheses/   one TOML card per hypothesis (H###) or strategy (S###)
+research/     ledger.jsonl, reports/, strategies/, calendar/ (tracked audit trail)
 data.parquet  raw input, stays at the repository root
 data/ artifacts/ reports/ target/   generated, ignored by git
 ```
@@ -106,7 +108,7 @@ vwap research replay all config
 vwap holdout run config
 ```
 
-Each stage writes `artifacts/<stage>/manifest.json` and refuses to run if the cleaned data changed after `data clean`. `vwap holdout run` works once only. Pipeline stages that were specified but not built: calendar fetch, features export, model walk forward, backtest, report build.
+Each stage writes `artifacts/<stage>/manifest.json` and refuses to run if the cleaned data changed after `data clean`. `vwap holdout run` works once only. `vwap features build config`, `vwap report build config`, `vwap calendar fetch config` and `vwap calendar import file.csv config` complete the set. Not built, and listed in `docs/DECISIONS.md`, section 16: the per trade log, breakdowns of strategy metrics, reliability bands.
 
 ## Error handling
 
@@ -134,7 +136,7 @@ Each stage writes `artifacts/<stage>/manifest.json` and refuses to run if the cl
 
 1. Write the exact formula and units in `docs/FEATURES.md` and the causal proof paragraph.
 2. Implement it in `crates/vwap_features/src/features.rs` using only `CausalView`, with any parameter in `config/features.toml` and `FeaturesConfig`.
-3. Append it to the end of `NAMES` (never insert, the column order is part of the golden fingerprint) and update `golden_feature_fingerprint` deliberately, with the reason in the commit message.
+3. Append it to the end of `NAMES` (never insert, the column order is part of the golden fingerprints). The 18 original columns, the nine calendar columns and the seven appended columns each have a fingerprint in `crates/vwap_features/tests/lookahead.rs`: leave the existing ones as they are and add a new one for the new columns, with the reason in the commit message.
 4. The `features_do_not_look_ahead` proptest covers it automatically because it iterates `feature_names()`.
 
 ## Where to read next

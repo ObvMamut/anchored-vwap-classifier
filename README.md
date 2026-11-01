@@ -12,7 +12,9 @@ On the data in this repository the answer is **no usable directional edge was fo
 * Gate 3b (does any pre registered hypothesis survive?): not passed. An omnibus screen found structure, but it is the clock driven chop rate, which has nothing to do with VWAP. Direction (rejection versus breakthrough) is not predictable from 18 features. Seven hypothesis cards were run on the discovery segment (2016 to 2021): five were dropped, two were left at "refine", none was promoted, so the confirmation and holdout segments were never used.
 * The only thread above noise is level confluence (a touch that coincides with prior day or overnight levels): +2.3 points for one coinciding level and +6.6 points for two or more. It is not significant and the data is too small to settle it.
 
-The full record is in `docs/DECISIONS.md` (sections 13 and 14) and in `research/`.
+After the research loop the remaining stages (calibrated models, purged walk forward validation, a cost aware backtest, the Deflated Sharpe Ratio and the Probability of Backtest Overfitting, a report) were built and run on three baseline strategies (majority class, logistic regression, LightGBM) on both timeframes. The 15 minute models have genuine probability skill (pooled Brier skill score about 0.03), but it comes from range and clock features, the same chop structure as before. No threshold on the rejection probability earns more than the round trip cost of 2.8 ticks on out of fold data, so every fold abstained: no trades, nothing promoted.
+
+The full record is in `docs/DECISIONS.md` (sections 13, 14 and 16) and in `research/`.
 
 ## Quick start
 
@@ -34,9 +36,9 @@ The first build takes about 5 to 10 minutes because polars and LightGBM are comp
 ```
 
 * `doctor` checks configuration, the raw data checksum, toolchain, fonts, disk space and git.
-* `pipeline` runs data cleaning, event detection, labels, the baseline report and the spot check charts, then verifies the research ledger. About 10 seconds on the included data.
+* `pipeline` runs data cleaning, event detection, labels, the feature export, the baseline report and the spot check charts, then verifies the research ledger. About 10 seconds on the included data.
 * `research verify` checks that the research ledger follows the protocol and that every commit it names exists.
-* `research replay all` recomputes every recorded hypothesis card from the raw data and compares it with the ledger. All seven reproduce exactly, because the whole chain is deterministic.
+* `research replay all` recomputes every recorded hypothesis card and strategy run from the raw data and compares it with the ledger. All 13 reproduce, because the whole chain is deterministic.
 
 ## The data
 
@@ -59,6 +61,7 @@ Every stage takes the config directory as its last argument and writes to `artif
 vwap data clean config        # raw file to cleaned yearly parquet, quality and roll reports
 vwap events detect config     # coarse bars, anchored VWAP, ATR, touch events
 vwap labels build config      # triple barrier labels
+vwap features build config    # the joined event, label and feature tables as parquet
 vwap baselines run config     # control levels and the gate 3a equivalence report
 vwap spotcheck config         # candlestick charts of 20 random discovery days
 ```
@@ -84,6 +87,27 @@ vwap holdout run config            # needs research/FREEZE.toml and a confirmed 
 
 To add a hypothesis, copy a card from `hypotheses/`, write the mechanism in words, commit it, then register and run it. Commit the ledger and the new report in `research/` afterwards, because the audit trail only counts if it is in the repository.
 
+## Models, backtest, report and calendar
+
+A strategy card (`hypotheses/S001.toml`) names a model (`majority`, `logistic` or `lgbm`), the timeframes and optionally a feature list, and is registered and counted in the same ledger. `vwap research strategy S001 config` runs it on the discovery segment:
+
+* a purged rolling walk forward (24 months of training, 6 months of testing, five folds) with a nested, cross fitted scheme inside each fold that picks the hyperparameters, calibrates the probabilities (isotonic or Platt) and tunes a trade threshold on out of fold data only;
+* a cost aware backtest of the pooled out of fold signals: entry at the next bar open, exits at the label barriers, 1 tick of slippage per side and 2 USD of commission per side, one position at a time;
+* gates on the calibrated probabilities and on the net expectancy, and the Deflated Sharpe Ratio and the Probability of Backtest Overfitting over every counted trial. Failed gates are listed in the ledger entry. A summary with the per fold results, the daily PnL series and the data for the plots is written to `research/strategies/` (tracked).
+
+Only a promoted strategy can be confirmed (once, on the confirmation segment) and then run on the holdout (once). `vwap research dsr config` prints the DSR and PBO of every trial. `vwap report build config` writes `reports/summary.md` and the plots: reliability diagrams, equity and drawdown, feature importance with its spread over folds, and a beeswarm of the contributions to the rejection score, computed by multiclass TreeSHAP written in safe Rust (checked against LightGBM's own values on binary models).
+
+```bash
+vwap research register S004 config
+vwap research strategy S004 config
+vwap research dsr config
+vwap report build config
+vwap features build config         # parquet export of the sample table
+vwap calendar fetch config         # optional: CPI, NFP, FOMC schedule snapshot, needs internet
+```
+
+The calendar features (release day, minutes until and since the next CPI, NFP and FOMC release) are off. They need a frozen snapshot from the official pages, which could not be fetched from the development environment. Run `vwap calendar fetch config` once on a machine with internet access, commit `research/calendar/`, and set `calendar_enabled = true` in `config/features.toml`. If a page changed the command fails with the reason and `vwap calendar import` accepts dates you supply.
+
 ## Configuration
 
 All parameters live in `config/*.toml` and are read into typed, validated structs (`crates/vwap_core/src/config.rs`).
@@ -95,6 +119,10 @@ All parameters live in `config/*.toml` and are read into typed, validated struct
 * `baselines.toml`: control levels, strata, bootstrap and the equivalence margin.
 * `research.toml`: the three way split, the alpha budget, verdict thresholds, paths of the ledger and reports.
 * `model.toml`: the fixed LightGBM settings of the omnibus screen.
+* `validation.toml`: walk forward geometry, embargo, inner blocks and the gate limits (no dates).
+* `strategy.toml`: model grids, calibration, the threshold rule.
+* `backtest.toml`: slippage, commission, position policy, the cost sweep.
+* `report.toml`, `calendar.toml`: the report and the calendar snapshot.
 
 ## Repository layout
 
@@ -102,12 +130,14 @@ All parameters live in `config/*.toml` and are read into typed, validated struct
 config/        all parameters
 crates/        vwap_core (config, types, manifests)  vwap_data (cleaning)
                vwap_events (VWAP, ATR, touches)  vwap_labels (triple barrier)
-               vwap_features (18 features)  vwap_baselines (controls, gate 3a)
-               vwap_research (the protocol)  vwap_report (charts)
-               vwap_cli (the vwap binary)  vwap_testkit (test data)
+               vwap_features (34 features)  vwap_dataset (joined table, export)
+               vwap_baselines (controls, gate 3a)  vwap_validation (walk forward, DSR, PBO)
+               vwap_model (models, calibration, TreeSHAP)  vwap_backtest (fills, costs)
+               vwap_calendar (release schedule snapshot)  vwap_research (the protocol)
+               vwap_report (charts)  vwap_cli (the vwap binary)  vwap_testkit (test data)
 docs/          specifications, the protocol, decisions and results, operations
-hypotheses/    one TOML card per hypothesis
-research/      the ledger and the card reports (tracked)
+hypotheses/    one TOML card per hypothesis or strategy
+research/      the ledger, the card reports and the strategy summaries (tracked)
 data.parquet   the raw input
 ```
 
@@ -119,13 +149,14 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --all --check
 ```
 
-There are about 80 tests, including property tests that replace every bar after a cut and require labels, features, VWAP and events to stay bit for bit identical (no lookahead), a golden fingerprint of all features, and end to end tests that drive the real binary on synthetic data. Conventions are in `CLAUDE.md`, the runbook is `docs/OPERATIONS.md`.
+There are about 215 tests, including property tests that replace every bar after a cut and require labels, features, VWAP and events to stay bit for bit identical (no lookahead), golden fingerprints of the features, a check of TreeSHAP against LightGBM, and end to end tests that drive the real binary and the whole strategy protocol (promotion, one shot confirmation, one holdout run) on synthetic data. Conventions are in `CLAUDE.md`, the runbook is `docs/OPERATIONS.md`.
 
 ## Limitations and what is not built
 
 * The weight is a tick count and the series is not exchange NQ. Conclusions may not transfer to real NQ volume.
 * The discovery segment is only about 4.9 years, so effects smaller than a few percentage points cannot be established.
-* Specified but not implemented, because the research found no signal to model or trade: calendar fetch, a features export, model walk forward with calibration, a cost aware backtest, the Deflated Sharpe Ratio and the Probability of Backtest Overfitting, multiclass TreeSHAP and the full report. See the banners in `docs/MODELING.md`, `docs/BACKTEST.md` and `docs/ROADMAP.md`.
+* Not built: the per trade log and a standalone backtest command, breakdowns of the strategy metrics by year, regime and side, reliability bands, and the designed features for volume trend, cumulative relative volume, opening range levels, realised volatility percentile and the overnight gap. The calendar fetch has not been run against the live sites. See `docs/DECISIONS.md`, section 16.
+* The strategy tests use a synthetic market with a planted signal. They prove the plumbing and the gates, not anything about NQ.
 
 ## License
 

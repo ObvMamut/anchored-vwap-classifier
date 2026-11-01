@@ -41,9 +41,10 @@ Timings on the included data (release build):
 * `baselines run` 2.5 s
 * `spotcheck` 1.1 s
 * `research verify` under 0.1 s
-* the whole `pipeline` about 9 s
+* `features build` 0.9 s
+* the whole `pipeline` about 10 s
 
-The first build takes 5 to 10 minutes. `cargo test --workspace` takes about 25 seconds once built.
+The first build takes 5 to 10 minutes. `cargo test --workspace` takes about 2 minutes once built, mostly the strategy protocol tests.
 
 ## 3. What each stage writes
 
@@ -51,7 +52,11 @@ The first build takes 5 to 10 minutes. `cargo test --workspace` takes about 25 s
 * `events detect`: `artifacts/events/bars_{5,15}m.parquet`, `events_{5,15}m.parquet`, `events_report.json`, `manifest.json`. These are for inspection. No stage reads them, because every stage rebuilds events from the cleaned bars in a few seconds, which keeps one source of truth.
 * `labels build`: `artifacts/labels/labeled_events_{5,15}m.parquet`, `label_report_{5,15}m.json`, `manifest.json`.
 * `baselines run`: `artifacts/baselines/baselines_report.json`, `reports/gate_baselines.md`, `manifest.json`.
+* `features build`: `artifacts/features/features_{5,15}m.parquet` (event keys, labels, barrier prices and the 34 feature columns) and `manifest.json`.
 * `spotcheck`: `artifacts/spotcheck/*.png`, discovery segment days only.
+* `research strategy ...`: `research/strategies/<id>_<w>m.json` (tracked) and a ledger entry. `research confirm` and `holdout run` write under `research/strategies/confirm/` and `research/strategies/holdout/`.
+* `report build`: `reports/summary.md` and `reports/plots/*.png` (ignored by git, regenerated on demand).
+* `calendar fetch` and `calendar import`: `research/calendar/events.csv` and `lock.json` (tracked).
 * `research ...`: `research/ledger.jsonl` and `research/reports/*` (tracked in git).
 
 `data/`, `artifacts/`, `reports/` and `target/` are ignored by git and can be deleted and rebuilt. `research/` is the audit trail and must never be deleted or edited by hand.
@@ -75,11 +80,33 @@ The first build takes 5 to 10 minutes. `cargo test --workspace` takes about 25 s
 
 The alpha budget is shared: 12 cards and a total of 0.05 for the whole study. `vwap research status config` shows what is left.
 
+## 5b. Running a strategy, the report and the calendar
+
+Strategy cards (`docs/PROTOCOL.md`, section 12) are run like hypothesis cards:
+
+```bash
+./target/release/vwap research register S004 config
+./target/release/vwap research strategy S004 config
+./target/release/vwap research dsr config
+./target/release/vwap report build config
+```
+
+The card must be committed first. `strategy` runs both timeframes and takes about a second for the majority model, 10 seconds for the logistic model and about 2.5 minutes for LightGBM with its 8 point grid (both timeframes, release build). It prints the verdict and every failed gate. Commit `research/ledger.jsonl` and `research/strategies/` afterwards. `report build` writes `reports/summary.md` and the plots. `features build` exports the sample table to parquet for use outside the project.
+
+The calendar features are off. To use them, run this once on a machine with internet access, commit `research/calendar/`, and set `calendar_enabled = true` in `config/features.toml` (which changes every feature table, so earlier results stay valid only as recorded and new cards need the snapshot):
+
+```bash
+./target/release/vwap calendar fetch config
+```
+
+If a page changed the command stops with the counts it found. Fix the addresses in `config/calendar.toml`, or write the dates yourself as `kind,date` rows and run `vwap calendar import dates.csv config`.
+
 ## 6. After a configuration or code change
 
 * Changed `data.toml` or the raw file: run `vwap data clean config`, then the later stages.
 * Changed `events.toml`, `labels.toml`, `features.toml`: results change. `research replay all` will show which recorded cards are affected. Do not overwrite the ledger. A changed definition is a new study and needs new cards.
 * Changed only `baselines.toml` or `model.toml`: the baseline report or the omnibus changes, the recorded card results do not.
+* Changed `strategy.toml`, `validation.toml` or `backtest.toml`: recorded strategy runs no longer reproduce, and `research verify` reports the changed file. Treat it as a new study with new strategy cards.
 
 ## 7. Troubleshooting
 
@@ -88,6 +115,7 @@ The alpha budget is shared: 12 cards and a total of 0.05 for the whole study. `v
 * **"the cleaned data does not match its manifest".** The files in `data/clean` changed after `data clean` wrote its manifest. Run `vwap data clean config` again.
 * **"config/data.toml pins ...".** The raw file differs from the pinned SHA256. Restore the file, or, if you changed it on purpose, update `input_sha256` and treat all earlier results as belonging to the old data.
 * **"... is ignored by git".** The ledger or report directory is covered by `.gitignore`, so the audit trail would be lost on a fresh clone. Fix `.gitignore`.
+* **"calendar_enabled is true but the snapshot is unusable".** `research/calendar/` is missing or `events.csv` no longer matches `lock.json`. Rerun `vwap calendar fetch config`.
 * **"no usable font".** Set `font_paths` in `config/events.toml` to a TrueType font on your system. Only `vwap spotcheck` needs it.
 * **"... is not committed; commit the card first".** `register` and `run` require the card file to be committed and unchanged, so the run is tied to a commit.
 * **`git push` returns 403.** The Claude GitHub App needs write access (contents permission) to the repository. Grant it at https://github.com/apps/claude/installations/select_target. Pushing `.github/workflows/` additionally needs the workflows permission.
