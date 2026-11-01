@@ -1,0 +1,7 @@
+id = "S005"
+kind = "strategy"
+mechanism = "Direction model with trees. LightGBM trained only on touches that resolve, rejection against breakthrough, with the pre registered grid, calibrated, and a threshold on the probability of rejection tuned on out of fold data that must allow at least 4 trades per week on average. Default barriers."
+model = "lgbm"
+target = "direction"
+min_trades_per_week = 4.0
+timeframes = [5, 15]
