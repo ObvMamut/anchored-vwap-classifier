@@ -194,7 +194,11 @@ pub fn benchmark(config: &Path, grid: bool) -> Result<String> {
     let cfg = vwap_core::load_research_config(config)?;
     guard_ledger(&cfg)?;
     let w = world(config)?;
-    let res = vwap_research::strategy::run_benchmark(&w.env(config), &w.samples)?;
+    let res = vwap_research::strategy::run_benchmark(
+        &w.env(config),
+        &w.samples,
+        &w.coarse.keys().copied().collect::<Vec<u32>>(),
+    )?;
     let dir =
         std::path::Path::new(&vwap_core::load_report_config(config)?.output_dir).to_path_buf();
     std::fs::create_dir_all(&dir)?;
@@ -267,7 +271,7 @@ fn benchmark_grid(config: &Path) -> Result<String> {
     let w = world(config)?;
     let g = w.labels.grid.clone();
     let mut rows: Vec<GridRow> = Vec::new();
-    for width in [5u32, 15] {
+    for width in w.coarse.keys().copied() {
         let horizons = if width == 5 {
             &g.horizon_5m
         } else {
@@ -288,6 +292,7 @@ fn benchmark_grid(config: &Path) -> Result<String> {
                     let res = vwap_research::strategy::run_benchmark(
                         &w.env_with(config, &labels),
                         &samples,
+                        &[width],
                     )?;
                     let Some(p) = res
                         .iter()
@@ -320,8 +325,24 @@ fn benchmark_grid(config: &Path) -> Result<String> {
     )?;
     let ledger = vwap_research::Ledger::open(Path::new(&cfg.ledger_path));
     let positive = rows.iter().filter(|r| r.edge > 0.0).count();
+    // one search per distinct grid and cost: a changed grid or cost is a new search
+    let key = format!(
+        "{:?}|{:?}|{:?}|{:?}|{}",
+        g.m1,
+        g.m2,
+        g.horizon_5m,
+        g.horizon_15m,
+        w.backtest.round_trip_ticks()
+    );
+    let name = format!(
+        "label_grid_benchmark_{}",
+        vwap_core::manifest::sha256_bytes(key.as_bytes())
+            .chars()
+            .take(12)
+            .collect::<String>()
+    );
     let counted = ledger.record_search(
-        "label_grid_benchmark",
+        &name,
         rows.len(),
         &format!(
             "take every touch over {} label grid cells: {positive} with a positive win rate edge",

@@ -50,7 +50,9 @@ pub struct Row {
     pub mean_target_ticks: f64,
     pub mean_stop_ticks: f64,
     pub breakeven_win_rate: f64,
-    /// `win_rate - breakeven_win_rate`.
+    /// `win_rate - breakeven_win_rate`. A nominal approximation from the barrier distances at the
+    /// touch: trades that end at the horizon or gap through a barrier pay something else, so the
+    /// sign of the edge is not realised profit. Net ticks are the arbiter.
     pub edge: f64,
     pub target_share: f64,
     pub stop_share: f64,
@@ -158,8 +160,20 @@ impl Row {
     }
 }
 
-/// The benchmark on every timeframe of `env.coarse` for the discovery view of `samples`.
-pub fn run_benchmark(env: &Env, samples: &[Sample]) -> Result<Vec<BenchmarkResult>, ResearchError> {
+/// The benchmark on the timeframes `widths` (each must exist in `env.coarse`) for the discovery
+/// view of `samples`. Rejects a walk forward step shorter than the test window, because the
+/// pooled rows would then count the same touch more than once.
+pub fn run_benchmark(
+    env: &Env,
+    samples: &[Sample],
+    widths: &[u32],
+) -> Result<Vec<BenchmarkResult>, ResearchError> {
+    if env.validation.step_months < env.validation.test_months {
+        return Err(ResearchError::Strategy(
+            "the benchmark needs step_months at least test_months, so test windows do not overlap"
+                .into(),
+        ));
+    }
     let view = DiscoveryView::select(samples, &Bounds::from_config(env.research));
     if view.samples().is_empty() {
         return Err(ResearchError::NotEnoughData(
@@ -173,7 +187,7 @@ pub fn run_benchmark(env: &Env, samples: &[Sample]) -> Result<Vec<BenchmarkResul
     let (slip, comm) = (env.backtest.slippage_ticks, env.backtest.commission_usd);
     let kappa = env.backtest.round_trip_ticks();
     let mut out = Vec::new();
-    for (&width, bars) in env.coarse {
+    for (&width, bars) in env.coarse.iter().filter(|(w, _)| widths.contains(w)) {
         let mut usable: Vec<&Sample> = view
             .samples()
             .iter()
@@ -289,11 +303,16 @@ mod tests {
     const CONFIG: &str = "../../config";
 
     fn run_on(signal: bool, seed: u64) -> Vec<BenchmarkResult> {
+        run_with(signal, seed, &[5, 15], 6)
+    }
+
+    fn run_with(signal: bool, seed: u64, widths: &[u32], step: u32) -> Vec<BenchmarkResult> {
         let cfg = Path::new(CONFIG);
         let research = vwap_core::load_research_config(cfg).unwrap();
         let strategy = vwap_core::load_strategy_config(cfg).unwrap();
         let mut validation = vwap_core::load_validation_config(cfg).unwrap();
         validation.bootstrap_draws = 200;
+        validation.step_months = step;
         let backtest = vwap_core::load_backtest_config(cfg).unwrap();
         let labels = vwap_core::load_labels_config(cfg).unwrap();
         let m = market(
@@ -315,7 +334,7 @@ mod tests {
             coarse: &coarse,
             one: &m.one,
         };
-        run_benchmark(&env, &m.samples).unwrap()
+        run_benchmark(&env, &m.samples, widths).unwrap_or_default()
     }
 
     #[test]
@@ -361,6 +380,14 @@ mod tests {
         let r = run_on(true, 22);
         let share = r[0].results[0].pooled.rejection_share_resolved;
         assert!((share - 0.5).abs() < 0.04, "{share}");
+    }
+
+    #[test]
+    fn only_the_requested_widths_are_run_and_overlapping_windows_are_refused() {
+        assert_eq!(run_with(false, 24, &[15], 6).len(), 1);
+        assert!(run_with(false, 24, &[5], 6).is_empty());
+        // a step shorter than the test window would count touches twice: an error, so empty here
+        assert!(run_with(false, 24, &[15], 3).is_empty());
     }
 
     #[test]

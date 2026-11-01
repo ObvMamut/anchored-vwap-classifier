@@ -51,7 +51,9 @@ pub struct Params<'a> {
     /// only. Every touch is still predicted, and the threshold is tuned on all of them. The
     /// three class objective is dominated by chop, which is predictable from the clock.
     pub direction: bool,
-    /// Average trades per calendar week the threshold must allow on the out of fold events.
+    /// Average trades per calendar week the threshold must allow on the out of fold events. It
+    /// counts selected touches, before the one at a time policy drops overlapping signals, so it
+    /// is a necessary condition for the trades per week gate, not a sufficient one.
     pub min_trades_per_week: Option<f64>,
 }
 
@@ -208,13 +210,25 @@ fn weighted_loss(c: &Cand, t: &Table, folds: &[InnerFold], direction: bool) -> f
             if direction && c == 2 {
                 continue;
             }
-            ps.push(*row);
+            ps.push(if direction { two_class(*row) } else { *row });
             y.push(c);
         }
         s += log_loss(&ps, &y) * y.len() as f64;
         n += y.len() as f64;
     }
     s / n
+}
+
+/// Direction mode scores resolved events only, so the mass on the unresolved class is removed
+/// and the other two classes are rescaled to sum to one: $\hat p_k / (\hat p_0 + \hat p_1)$.
+/// A row with no mass on either class is left unchanged.
+fn two_class(row: [f64; 3]) -> [f64; 3] {
+    let m = row[0] + row[1];
+    if m > 0.0 {
+        [row[0] / m, row[1] / m, 0.0]
+    } else {
+        row
+    }
 }
 
 /// Time range of the events of one inner block: first close and last label end.
@@ -503,6 +517,14 @@ mod tests {
             min_trades_per_week: None,
         };
         run_fold(family, &t, &train, &test, &p).unwrap()
+    }
+
+    #[test]
+    fn direction_scoring_rescales_the_two_resolved_classes() {
+        let r = two_class([0.3, 0.1, 0.6]);
+        assert!((r[0] - 0.75).abs() < 1e-12 && (r[1] - 0.25).abs() < 1e-12 && r[2] == 0.0);
+        assert!((r[0] + r[1] - 1.0).abs() < 1e-12);
+        assert_eq!(two_class([0.0, 0.0, 1.0]), [0.0, 0.0, 1.0]);
     }
 
     #[test]

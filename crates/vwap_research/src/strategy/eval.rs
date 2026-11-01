@@ -134,6 +134,7 @@ pub struct TradeStats {
     /// $(S + \kappa) / (T + S)$ for the mean target $T$ and stop $S$ of these trades.
     pub breakeven_win_rate: f64,
     /// `win_rate - breakeven_win_rate`; positive means an edge before the bootstrap interval.
+    /// A nominal approximation (time exits and gaps are ignored), not realised profit.
     pub edge: f64,
 }
 

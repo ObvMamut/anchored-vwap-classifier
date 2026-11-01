@@ -525,6 +525,10 @@ pub fn dsr_report(env: &Env) -> Result<String, ResearchError> {
     Ok(s)
 }
 
+/// Result keys added after the first strategy runs were recorded (S001 to S003). A recorded run
+/// without them still replays; every other unrecorded key is reported as a difference.
+const ADDED_AFTER_RECORDING: [&str; 3] = ["trade_stats", "weeks", "trades_per_week"];
+
 /// Compares two JSON values, floats within a relative tolerance, nulls equal to nulls.
 pub fn json_close(
     a: &serde_json::Value,
@@ -560,8 +564,13 @@ pub fn json_close(
                     None => diffs.push(format!("{path}.{k}: missing")),
                 }
             }
-            // keys that only the fresh value has were added to the output after the run was
-            // recorded; every recorded number must still match
+            // only the named additions made after the first runs were recorded may be missing from
+            // the recorded value; any other key the fresh value has is a difference
+            for k in y.keys() {
+                if !x.contains_key(k) && !ADDED_AFTER_RECORDING.contains(&k.as_str()) {
+                    diffs.push(format!("{path}.{k}: not recorded"));
+                }
+            }
         }
         _ => {
             if a != b {
@@ -956,5 +965,13 @@ mod tests {
         d.clear();
         json_close(&a, &a, 1e-9, "r", &mut d);
         assert!(d.is_empty());
+        // a key the recorded value lacks passes only when it is a named later addition
+        let old = serde_json::json!({"x": 1.0});
+        let ok = serde_json::json!({"x": 1.0, "trades_per_week": 2.0});
+        let bad = serde_json::json!({"x": 1.0, "surprise": 2.0});
+        json_close(&old, &ok, 1e-9, "r", &mut d);
+        assert!(d.is_empty());
+        json_close(&old, &bad, 1e-9, "r", &mut d);
+        assert_eq!(d, vec!["r.surprise: not recorded".to_string()]);
     }
 }
