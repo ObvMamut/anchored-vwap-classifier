@@ -54,6 +54,7 @@ pub fn execute(
     cfg: &ResearchConfig,
     card_path: &Path,
     git_commit: &str,
+    fingerprint: &str,
     samples: &[Sample],
 ) -> Result<CardResult, ResearchError> {
     selftest(cfg)?;
@@ -104,6 +105,7 @@ pub fn execute(
         delta: result.delta,
         p: result.p,
         mde: result.mde.is_finite().then_some(result.mde),
+        data_fingerprint: Some(fingerprint.to_string()),
         verdict: result.verdict,
         time_utc: now(),
     })?;
@@ -114,6 +116,7 @@ pub fn execute(
 pub fn execute_omnibus(
     cfg: &ResearchConfig,
     git_commit: &str,
+    fingerprint: &str,
     samples: &[Sample],
     horizon_bars: impl Fn(u32) -> usize,
 ) -> Result<crate::omnibus::OmnibusResult, ResearchError> {
@@ -147,6 +150,7 @@ pub fn execute_omnibus(
         alpha_spent: cfg.alpha_omnibus,
         statistic: r.statistic,
         p: r.p,
+        data_fingerprint: Some(fingerprint.to_string()),
         verdict: r.verdict,
         time_utc: now(),
     })?;
@@ -267,4 +271,329 @@ pub fn status(cfg: &ResearchConfig) -> Result<String, ResearchError> {
         "consecutive nulls at the end of the ledger: {nulls}\n"
     ));
     Ok(s)
+}
+
+/// Result of checking the structure of the ledger.
+#[derive(Debug, serde::Serialize)]
+pub struct VerifyReport {
+    pub entries: usize,
+    pub cards_run: usize,
+    pub trials: usize,
+    pub alpha_spent: f64,
+    /// Every git commit named by the ledger, for the caller to check against the repository.
+    pub commits: Vec<String>,
+    pub problems: Vec<String>,
+}
+
+/// Checks the ledger against the protocol: strictly increasing cycles, every run registered
+/// first with an unchanged card, budget respected, confirmations only after a PROMOTE.
+pub fn verify(cfg: &ResearchConfig) -> Result<VerifyReport, ResearchError> {
+    let ledger = Ledger::open(Path::new(&cfg.ledger_path));
+    let entries = ledger.read_all()?;
+    let mut problems = Vec::new();
+    let mut registered: std::collections::BTreeMap<String, String> = Default::default();
+    let mut promoted: std::collections::BTreeSet<String> = Default::default();
+    let mut commits = Vec::new();
+    let (mut expected_cycle, mut alpha, mut omnibus) = (1usize, 0.0f64, 0usize);
+    for e in &entries {
+        match e {
+            Entry::Registered {
+                card_id,
+                sha256,
+                git_commit,
+                ..
+            } => {
+                commits.push(git_commit.clone());
+                if registered.insert(card_id.clone(), sha256.clone()).is_some() {
+                    problems.push(format!("{card_id} is registered twice"));
+                }
+            }
+            Entry::Run {
+                cycle,
+                card_id,
+                sha256,
+                git_commit,
+                view,
+                alpha_spent,
+                verdict,
+                ..
+            } => {
+                commits.push(git_commit.clone());
+                if *cycle != expected_cycle {
+                    problems.push(format!(
+                        "cycle {cycle} of {card_id} breaks the sequence (expected {expected_cycle})"
+                    ));
+                }
+                expected_cycle = cycle + 1;
+                alpha += alpha_spent;
+                match registered.get(card_id) {
+                    None => problems.push(format!("{card_id} ran without being registered first")),
+                    Some(h) if h != sha256 => problems.push(format!(
+                        "{card_id} ran with a hash that differs from its registration"
+                    )),
+                    Some(_) => {}
+                }
+                if view == "discovery" && *verdict == Verdict::Promote {
+                    promoted.insert(card_id.clone());
+                }
+            }
+            Entry::Omnibus {
+                cycle,
+                git_commit,
+                alpha_spent,
+                ..
+            } => {
+                commits.push(git_commit.clone());
+                omnibus += 1;
+                if *cycle != expected_cycle {
+                    problems.push(format!(
+                        "omnibus cycle {cycle} breaks the sequence (expected {expected_cycle})"
+                    ));
+                }
+                expected_cycle = cycle + 1;
+                alpha += alpha_spent;
+            }
+            Entry::Confirm {
+                cycle,
+                card_id,
+                git_commit,
+                ..
+            } => {
+                commits.push(git_commit.clone());
+                if *cycle != expected_cycle {
+                    problems.push(format!(
+                        "confirmation cycle {cycle} breaks the sequence (expected {expected_cycle})"
+                    ));
+                }
+                expected_cycle = cycle + 1;
+                if !promoted.contains(card_id) {
+                    problems.push(format!("{card_id} was confirmed without a PROMOTE verdict"));
+                }
+            }
+            Entry::Diagnostic { git_commit, .. } => commits.push(git_commit.clone()),
+        }
+    }
+    let cards_run = ledger.cards_run()?;
+    if cards_run.len() > cfg.max_cards {
+        problems.push(format!(
+            "{} cards run, budget is {}",
+            cards_run.len(),
+            cfg.max_cards
+        ));
+    }
+    if omnibus > 1 {
+        problems.push(format!(
+            "the omnibus cycle ran {omnibus} times, once is allowed"
+        ));
+    }
+    if alpha > cfg.alpha_total + 1e-9 {
+        problems.push(format!(
+            "alpha spent {alpha:.4} exceeds the total {:.4}",
+            cfg.alpha_total
+        ));
+    }
+    // registered cards must still match the committed files
+    for (id, hash) in &registered {
+        let path = Path::new(&cfg.cards_dir).join(format!("{id}.toml"));
+        match load_card(&path) {
+            Ok((_, current)) if &current == hash => {}
+            Ok((_, current)) => problems.push(format!(
+                "card {id} changed after registration ({hash} then {current})"
+            )),
+            Err(e) => problems.push(format!("card {id} cannot be read: {e}")),
+        }
+    }
+    commits.sort();
+    commits.dedup();
+    Ok(VerifyReport {
+        entries: entries.len(),
+        cards_run: cards_run.len(),
+        trials: ledger.trials()?,
+        alpha_spent: alpha,
+        commits,
+        problems,
+    })
+}
+
+/// The recorded and the recomputed result of one card.
+#[derive(Debug, serde::Serialize)]
+pub struct ReplayResult {
+    pub card_id: String,
+    pub recorded_delta: f64,
+    pub replayed_delta: f64,
+    pub recorded_p: f64,
+    pub replayed_p: f64,
+    pub recorded_verdict: Verdict,
+    pub replayed_verdict: Verdict,
+    pub data_fingerprint_matches: Option<bool>,
+    pub matches: bool,
+}
+
+/// Re-runs a registered card on the discovery view without touching the ledger, and compares
+/// the numbers with the last recorded run. The whole chain is deterministic, so any
+/// difference means the data, the code or the configuration changed.
+pub fn replay(
+    cfg: &ResearchConfig,
+    card_path: &Path,
+    fingerprint: &str,
+    samples: &[Sample],
+) -> Result<ReplayResult, ResearchError> {
+    const TOL: f64 = 1e-12;
+    let (card, hash) = load_card(card_path)?;
+    card.validate(feature_names())?;
+    let ledger = Ledger::open(Path::new(&cfg.ledger_path));
+    match ledger.registered_hash(&card.id)? {
+        None => return Err(ResearchError::NotRegistered { id: card.id }),
+        Some(h) if h != hash => {
+            return Err(ResearchError::CardChanged {
+                id: card.id,
+                registered: h,
+                current: hash,
+            });
+        }
+        Some(_) => {}
+    }
+    let recorded = ledger
+        .read_all()?
+        .into_iter()
+        .rev()
+        .find_map(|e| match e {
+            Entry::Run {
+                card_id,
+                view,
+                delta,
+                p,
+                verdict,
+                data_fingerprint,
+                ..
+            } if card_id == card.id && view == "discovery" => {
+                Some((delta, p, verdict, data_fingerprint))
+            }
+            _ => None,
+        })
+        .ok_or_else(|| ResearchError::NotRegistered {
+            id: format!("{} (no recorded run)", card.id),
+        })?;
+    let view = DiscoveryView::select(samples, &Bounds::from_config(cfg));
+    let r = run_card(&card, view.samples(), cfg);
+    let same = |a: f64, b: f64| (a - b).abs() <= TOL || (a.is_nan() && b.is_nan());
+    let fp_match = recorded.3.as_deref().map(|f| f == fingerprint);
+    Ok(ReplayResult {
+        card_id: card.id,
+        recorded_delta: recorded.0,
+        replayed_delta: r.delta,
+        recorded_p: recorded.1,
+        replayed_p: r.p,
+        recorded_verdict: recorded.2,
+        replayed_verdict: r.verdict,
+        data_fingerprint_matches: fp_match,
+        matches: same(recorded.0, r.delta) && same(recorded.1, r.p) && recorded.2 == r.verdict,
+    })
+}
+
+#[cfg(test)]
+mod verify_tests {
+    use super::*;
+
+    fn cfg_in(dir: &Path) -> ResearchConfig {
+        let mut c = vwap_core::load_research_config(Path::new("../../config")).unwrap();
+        c.ledger_path = dir.join("ledger.jsonl").display().to_string();
+        c.cards_dir = dir.join("cards").display().to_string();
+        c
+    }
+
+    fn tmp(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("vwap_verify_{name}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(d.join("cards")).unwrap();
+        d
+    }
+
+    const CARD: &str = "id = \"T1\"\nfamily = \"regime\"\nmechanism = \"a long enough mechanism text for the test\"\noutcome = \"rejection\"\nfeature = \"vslope_align\"\nrule = \"top_tercile\"\ndirection = \"positive\"\ntimeframes = [5]\n";
+
+    fn run_entry(cycle: usize, sha: &str) -> Entry {
+        Entry::Run {
+            cycle,
+            card_id: "T1".into(),
+            sha256: sha.into(),
+            git_commit: "c".into(),
+            view: "discovery".into(),
+            timeframes: vec![5],
+            trials_added: 1,
+            alpha_spent: 0.003,
+            delta: 0.0,
+            p: 0.5,
+            mde: None,
+            data_fingerprint: None,
+            verdict: Verdict::Drop,
+            time_utc: "t".into(),
+        }
+    }
+
+    #[test]
+    fn a_consistent_ledger_verifies_and_each_kind_of_tampering_is_reported() {
+        let dir = tmp("ok");
+        let cfg = cfg_in(&dir);
+        fs::write(dir.join("cards/T1.toml"), CARD).unwrap();
+        let hash = load_card(&dir.join("cards/T1.toml")).unwrap().1;
+        let l = Ledger::open(Path::new(&cfg.ledger_path));
+        l.append(&Entry::Registered {
+            card_id: "T1".into(),
+            sha256: hash.clone(),
+            git_commit: "c".into(),
+            time_utc: "t".into(),
+        })
+        .unwrap();
+        l.append(&run_entry(1, &hash)).unwrap();
+        let r = verify(&cfg).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert_eq!(r.cards_run, 1);
+
+        // a card edited after registration
+        fs::write(
+            dir.join("cards/T1.toml"),
+            format!("{CARD}min_effect = 0.5\n"),
+        )
+        .unwrap();
+        assert!(
+            verify(&cfg)
+                .unwrap()
+                .problems
+                .iter()
+                .any(|p| p.contains("changed after registration"))
+        );
+        fs::write(dir.join("cards/T1.toml"), CARD).unwrap();
+
+        // a skipped cycle number
+        l.append(&run_entry(5, &hash)).unwrap();
+        assert!(
+            verify(&cfg)
+                .unwrap()
+                .problems
+                .iter()
+                .any(|p| p.contains("breaks the sequence"))
+        );
+    }
+
+    #[test]
+    fn a_run_without_registration_and_a_confirmation_without_promote_are_reported() {
+        let dir = tmp("bad");
+        let cfg = cfg_in(&dir);
+        let l = Ledger::open(Path::new(&cfg.ledger_path));
+        l.append(&run_entry(1, "h")).unwrap();
+        l.append(&Entry::Confirm {
+            cycle: 2,
+            card_id: "T1".into(),
+            sha256: "h".into(),
+            git_commit: "c".into(),
+            delta: 0.0,
+            p: 0.5,
+            verdict: Verdict::NotConfirmed,
+            time_utc: "t".into(),
+        })
+        .unwrap();
+        let p = verify(&cfg).unwrap().problems;
+        assert!(p.iter().any(|x| x.contains("without being registered")));
+        assert!(p.iter().any(|x| x.contains("confirmed without a PROMOTE")));
+    }
 }

@@ -7,8 +7,8 @@ confirm_end = "2023-09-30"
 holdout_start = "2023-10-01"
 
 cards_dir = "hypotheses"
-ledger_path = "artifacts/research/ledger.jsonl"
-report_dir = "reports/research"
+ledger_path = "research/ledger.jsonl"
+report_dir = "research/reports"
 
 # Alpha budget: omnibus plus a Bonferroni share per targeted card.
 alpha_total = 0.05

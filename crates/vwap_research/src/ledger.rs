@@ -48,6 +48,9 @@ pub enum Entry {
         /// `None` when no minimum detectable effect is defined (group tests).
         #[serde(default)]
         mde: Option<f64>,
+        /// Fingerprint of the cleaned data the run read (absent in early entries).
+        #[serde(default)]
+        data_fingerprint: Option<String>,
         verdict: Verdict,
         time_utc: String,
     },
@@ -58,6 +61,8 @@ pub enum Entry {
         alpha_spent: f64,
         statistic: f64,
         p: f64,
+        #[serde(default)]
+        data_fingerprint: Option<String>,
         verdict: Verdict,
         time_utc: String,
     },
@@ -279,6 +284,7 @@ seed = 1
             delta: 0.04,
             p: 0.001,
             mde: Some(0.03),
+            data_fingerprint: None,
             verdict,
             time_utc: "t".into(),
         }
@@ -354,6 +360,7 @@ mod nan_tests {
             delta: 0.02,
             p: 0.5,
             mde: None,
+            data_fingerprint: None,
             verdict: Verdict::Drop,
             time_utc: "t".into(),
         };

@@ -185,17 +185,6 @@ pub fn load_events_config(dir: &Path) -> Result<EventsConfig, CoreError> {
     Ok(cfg)
 }
 
-/// `config/validation.toml` (grown as later phases need more fields).
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ValidationConfig {
-    pub holdout_months: u32,
-}
-
-pub fn load_validation_config(dir: &Path) -> Result<ValidationConfig, CoreError> {
-    read_toml(dir, "validation.toml")
-}
-
 /// Volatility scale for the barriers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -272,14 +261,6 @@ pub struct BaselinesConfig {
 
 pub fn load_baselines_config(dir: &Path) -> Result<BaselinesConfig, CoreError> {
     read_toml(dir, "baselines.toml")
-}
-
-/// The first instant of the holdout, as UTC microseconds, given the last bar time.
-pub fn holdout_start_us(last_ts_us: i64, holdout_months: u32) -> i64 {
-    use chrono::{DateTime, Months};
-    DateTime::from_timestamp_micros(last_ts_us)
-        .and_then(|d| d.checked_sub_months(Months::new(holdout_months)))
-        .map_or(last_ts_us, |d| d.timestamp_micros())
 }
 
 /// `config/research.toml`.

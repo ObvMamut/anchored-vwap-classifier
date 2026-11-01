@@ -7,7 +7,7 @@ use std::fs;
 use std::ops::Range;
 use std::path::Path;
 
-use chrono::{DateTime, Datelike, Months, NaiveDate, TimeDelta};
+use chrono::{NaiveDate, TimeDelta};
 use plotters::prelude::*;
 use plotters::style::{FontStyle, register_font};
 use rand::SeedableRng;
@@ -48,24 +48,22 @@ fn clock(minute: i64) -> String {
     format!("{:02}:{:02}", m / 60, m % 60)
 }
 
-/// Sessions eligible for the visual check: in the development range (before the
-/// holdout starts) and with a full day of bars.
-pub fn eligible_sessions(bars: &CoarseBars, holdout_months: u32) -> Vec<i32> {
-    let last = bars
-        .open_us
-        .last()
-        .and_then(|&t| DateTime::from_timestamp_micros(t))
-        .map(|d| d.date_naive())
-        .unwrap_or_default();
-    let holdout_start = last
-        .checked_sub_months(Months::new(holdout_months))
-        .unwrap_or(last);
+/// Sessions eligible for the visual check: entirely inside `[start_us, end_us)`, which the CLI
+/// sets to the discovery segment so that no chart ever shows confirmation or holdout data, and
+/// with a full day of bars.
+pub fn eligible_sessions(bars: &CoarseBars, start_us: i64, end_us: i64) -> Vec<i32> {
+    let width_us = i64::from(bars.width) * 60_000_000;
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
     for &s in &bars.session {
         if seen.insert(s) {
             let r = session_range(bars, s);
-            if r.len() as u32 * bars.width >= 1000 && date_of(s) < holdout_start {
+            let first = bars.open_us.get(r.start).copied().unwrap_or(i64::MAX);
+            let last_end = bars
+                .open_us
+                .get(r.end.saturating_sub(1))
+                .map_or(i64::MAX, |t| t + width_us);
+            if r.len() as u32 * bars.width >= 1000 && first >= start_us && last_end < end_us {
                 out.push(s);
             }
         }
@@ -207,9 +205,4 @@ fn draw(
         .draw()?;
     root.present()?;
     Ok(())
-}
-
-#[allow(dead_code)]
-fn year(days: i32) -> i32 {
-    date_of(days).year()
 }

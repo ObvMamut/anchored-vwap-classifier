@@ -54,7 +54,7 @@ Confirmation tests each promoted card once on the `ConfirmView` at one sided $\a
 
 ## 7. The fixed analysis report
 
-Each run writes `reports/research/<id>.md` and appends one ledger line. The report states, for each timeframe: arm sizes, $\hat\pi$ in each arm, $\Delta$, simultaneous 95 percent session clustered interval, $p$, the minimum detectable effect, and the sign by discovery year. It also gives the contrast by volatility tercile and by side, the same contrast on the control levels of `BASELINES.md` (difference in differences, as a diagnostic of VWAP specificity, not a promotion condition), the missing value rate of the feature, and a cost adjusted expectancy proxy.
+Each run writes `research/reports/<id>.md` and appends one ledger line. The report states, for each timeframe: arm sizes, $\hat\pi$ in each arm, $\Delta$, simultaneous 95 percent session clustered interval, $p$, the minimum detectable effect, and the sign by discovery year. It also gives the contrast by volatility tercile and by side, the same contrast on the control levels of `BASELINES.md` (difference in differences, as a diagnostic of VWAP specificity, not a promotion condition), the missing value rate of the feature, and a cost adjusted expectancy proxy.
 
 Minimum detectable effect, with session clustering variance inflation $\mathrm{deff}$ taken from the bootstrap:
 
@@ -76,4 +76,4 @@ The loop stops when the budget is spent, or after two consecutive nulls followin
 
 ## 10. Ledger
 
-`artifacts/research/ledger.jsonl`, append only, one JSON object per cycle: cycle number, card id, card SHA256, git commit, view (discovery or confirm), timeframes, trials added, alpha spent, $\Delta$, $p$, verdict, MDE, UTC time. The pipeline never rewrites or deletes it.
+`research/ledger.jsonl`, append only, one JSON object per cycle: cycle number, card id, card SHA256, git commit, view (discovery or confirm), timeframes, trials added, alpha spent, $\Delta$, $p$, verdict, MDE, UTC time. The pipeline never rewrites or deletes it.
