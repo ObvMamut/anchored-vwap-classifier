@@ -104,3 +104,30 @@ pub fn write_manifest(
     m.write(Path::new(out_dir))?;
     Ok(())
 }
+
+/// The calendar table for the features: the frozen snapshot when `calendar_enabled`, otherwise
+/// a disabled table whose features are NaN. A missing or changed snapshot is an error.
+pub fn calendar_table(
+    config_dir: &Path,
+    feat: &vwap_core::FeaturesConfig,
+) -> Result<vwap_features::CalendarTable> {
+    if !feat.calendar_enabled {
+        return Ok(vwap_features::CalendarTable::disabled());
+    }
+    let cal = vwap_core::load_calendar_config(config_dir)?;
+    let (events, _) = vwap_calendar::read_snapshot(Path::new(&cal.output_dir))?;
+    let mut rel: [Vec<i64>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    for e in events {
+        if let Some(slot) = vwap_calendar::Kind::ALL
+            .iter()
+            .position(|k| *k == e.kind)
+            .and_then(|i| rel.get_mut(i))
+        {
+            slot.push(e.utc_us);
+        }
+    }
+    Ok(vwap_features::CalendarTable::new(
+        rel,
+        feat.calendar_cap_minutes,
+    ))
+}

@@ -297,3 +297,56 @@ pub fn load_report_config(dir: &Path) -> Result<ReportConfig, CoreError> {
     cfg.validate()?;
     Ok(cfg)
 }
+
+/// `calendar.toml`: the sources, the expected release times and the checks of the frozen
+/// snapshot of scheduled CPI, NFP and FOMC releases. Only `vwap calendar fetch` uses the network.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarConfig {
+    /// Holds `events.csv` and `lock.json`; tracked by git.
+    pub output_dir: String,
+    pub first_year: i32,
+    pub last_year: i32,
+    /// Pages with the BLS release schedules and the Federal Reserve meeting calendars.
+    pub cpi_urls: Vec<String>,
+    pub nfp_urls: Vec<String>,
+    pub fomc_urls: Vec<String>,
+    /// Release times, New York minutes of day (CPI and NFP 08:30, FOMC statement 14:00).
+    pub cpi_minute: u32,
+    pub nfp_minute: u32,
+    pub fomc_minute: u32,
+    /// Accepted number of releases per year and type.
+    pub monthly_min_per_year: usize,
+    pub monthly_max_per_year: usize,
+    pub fomc_min_per_year: usize,
+    pub fomc_max_per_year: usize,
+    pub timeout_seconds: u64,
+    pub user_agent: String,
+}
+
+impl CalendarConfig {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        let bad = self.first_year > self.last_year
+            || self.cpi_urls.is_empty()
+            || self.nfp_urls.is_empty()
+            || self.fomc_urls.is_empty()
+            || self.cpi_minute >= 1440
+            || self.nfp_minute >= 1440
+            || self.fomc_minute >= 1440
+            || self.monthly_min_per_year > self.monthly_max_per_year
+            || self.fomc_min_per_year > self.fomc_max_per_year
+            || self.timeout_seconds == 0;
+        if bad {
+            return Err(CoreError::ConfigInvalid(
+                "calendar.toml: years, sources, release minutes and the accepted counts must be consistent".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub fn load_calendar_config(dir: &Path) -> Result<CalendarConfig, CoreError> {
+    let cfg: CalendarConfig = read_toml(dir, "calendar.toml")?;
+    cfg.validate()?;
+    Ok(cfg)
+}

@@ -1,0 +1,27 @@
+# Sources and checks of the calendar snapshot (docs/FEATURES.md, section 6). The fetch needs a
+# machine with internet access and is the only stage that uses the network. The page addresses
+# below could not be checked from the development environment: if a host moved or a page changed,
+# `vwap calendar fetch` fails closed with the reason, and the addresses are fixed here.
+output_dir = "research/calendar"
+first_year = 2016
+last_year = 2025
+cpi_urls = ["https://www.bls.gov/schedule/news_release/cpi.htm"]
+nfp_urls = ["https://www.bls.gov/schedule/news_release/empsit.htm"]
+fomc_urls = [
+    "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+    "https://www.federalreserve.gov/monetarypolicy/fomchistorical2016.htm",
+    "https://www.federalreserve.gov/monetarypolicy/fomchistorical2017.htm",
+    "https://www.federalreserve.gov/monetarypolicy/fomchistorical2018.htm",
+    "https://www.federalreserve.gov/monetarypolicy/fomchistorical2019.htm",
+    "https://www.federalreserve.gov/monetarypolicy/fomchistorical2020.htm",
+]
+cpi_minute = 510
+nfp_minute = 510
+fomc_minute = 840
+# 2025 lost a CPI and delayed a jobs report in the federal shutdown, so 11 is accepted.
+monthly_min_per_year = 11
+monthly_max_per_year = 12
+fomc_min_per_year = 6
+fomc_max_per_year = 9
+timeout_seconds = 30
+user_agent = "anchored-vwap-classifier calendar fetch (research, one off)"

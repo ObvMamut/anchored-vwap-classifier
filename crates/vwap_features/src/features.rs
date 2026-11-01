@@ -5,6 +5,7 @@
 use vwap_core::FeaturesConfig;
 use vwap_events::{CoarseBars, Event};
 
+use crate::calendar::CalendarTable;
 use crate::levels::LevelTable;
 use crate::view::{CausalView, SessionIndex};
 
@@ -25,7 +26,7 @@ impl FeatureTable {
     }
 }
 
-const NAMES: [&str; 18] = [
+const NAMES: [&str; 27] = [
     "vslope_align",
     "dist_travelled",
     "bars_on_side",
@@ -44,6 +45,15 @@ const NAMES: [&str; 18] = [
     "dist_onh",
     "time_block",
     "conf_count",
+    "cal_cpi_day",
+    "cal_cpi_until",
+    "cal_cpi_since",
+    "cal_fomc_day",
+    "cal_fomc_until",
+    "cal_fomc_since",
+    "cal_nfp_day",
+    "cal_nfp_until",
+    "cal_nfp_since",
 ];
 
 pub fn feature_names() -> &'static [&'static str] {
@@ -207,13 +217,15 @@ pub fn build_features(
     bars: &CoarseBars,
     levels: &LevelTable,
     sessions: &SessionIndex,
+    calendar: &CalendarTable,
     cfg: &FeaturesConfig,
 ) -> FeatureTable {
     let mut cols = vec![Vec::with_capacity(events.len()); NAMES.len()];
     for e in events {
         let v = CausalView::new(bars, e.bar);
         let row = feature_row(e, &v, levels, sessions, cfg);
-        for (c, x) in cols.iter_mut().zip(row) {
+        let cal = calendar.features(e.close_us, e.session);
+        for (c, x) in cols.iter_mut().zip(row.into_iter().chain(cal)) {
             c.push(x);
         }
     }

@@ -1,5 +1,6 @@
 //! The `vwap` binary: one subcommand per pipeline stage.
 
+mod calendar;
 mod ctx;
 mod ops;
 mod report;
@@ -39,6 +40,11 @@ enum Command {
     Baselines {
         #[command(subcommand)]
         stage: BaselinesStage,
+    },
+    /// The frozen calendar snapshot for the K1 to K3 features.
+    Calendar {
+        #[command(subcommand)]
+        stage: CalendarStage,
     },
     /// Export the joined event, label and feature tables.
     Features {
@@ -94,6 +100,14 @@ enum EventsStage {
 enum LabelsStage {
     /// Build labeled events for every timeframe.
     Build { config: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum CalendarStage {
+    /// Download the official schedules, validate them and write the snapshot (needs internet).
+    Fetch { config: PathBuf },
+    /// Freeze a hand supplied CSV of `kind,date` rows with the same validation.
+    Import { csv: PathBuf, config: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -160,6 +174,10 @@ fn run() -> Result<()> {
         Command::Labels {
             stage: LabelsStage::Build { config },
         } => stages::labels_build(&config)?,
+        Command::Calendar { stage } => match stage {
+            CalendarStage::Fetch { config } => calendar::fetch(&config)?,
+            CalendarStage::Import { csv, config } => calendar::import(&csv, &config)?,
+        },
         Command::Features {
             stage: FeaturesStage::Build { config },
         } => stages::features_build(&config)?,

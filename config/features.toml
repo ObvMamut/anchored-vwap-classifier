@@ -11,3 +11,5 @@ globex_open_minute = 1080
 time_block_edges = [570, 630, 840, 1020]
 vol_ratio_scale = 10000.0
 output_dir = "artifacts/features"
+calendar_enabled = false
+calendar_cap_minutes = 1440

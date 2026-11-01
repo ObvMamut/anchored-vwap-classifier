@@ -13,6 +13,7 @@ vwap_events = { path = "../vwap_events" }
 [dev-dependencies]
 vwap_testkit = { path = "../vwap_testkit" }
 proptest.workspace = true
+chrono.workspace = true
 
 [lints]
 workspace = true

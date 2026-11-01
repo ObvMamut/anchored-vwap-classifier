@@ -5,7 +5,7 @@
 use proptest::prelude::*;
 use vwap_core::DataConfig;
 use vwap_events::{build, detect, event_params};
-use vwap_features::{LevelTable, SessionIndex, build_features, feature_names};
+use vwap_features::{CalendarTable, LevelTable, SessionIndex, build_features, feature_names};
 
 fn data_cfg() -> DataConfig {
     vwap_testkit::data_config()
@@ -21,6 +21,21 @@ const PER_DAY: usize = vwap_testkit::BARS_PER_DAY;
 /// Five Globex sessions on consecutive weekdays, a random walk with random tick volume.
 fn series(steps: &[i32], weights: &[u8]) -> vwap_data::CleanBars {
     vwap_testkit::multi_day_bars(DAYS, steps, weights)
+}
+
+/// Release instants spread over the series: one of each type per day, at different times.
+fn calendar_inside(bars: &vwap_data::CleanBars) -> CalendarTable {
+    let start = bars.ts_us[0];
+    let day = 86_400_000_000i64;
+    let at = |d: i64, h: i64| start + d * day + h * 3_600_000_000;
+    CalendarTable::new(
+        [
+            (0..DAYS as i64).map(|d| at(d, 9)).collect(),
+            (0..DAYS as i64).map(|d| at(d, 14)).collect(),
+            (0..DAYS as i64).map(|d| at(d, 20)).collect(),
+        ],
+        1440,
+    )
 }
 
 proptest! {
@@ -52,7 +67,9 @@ proptest! {
             let keep: Vec<_> = events.into_iter().filter(|e| e.close_us <= cut_us).collect();
             let lv = LevelTable::build(bars, &vwap_core::FeaturesConfig::default());
             let si = SessionIndex::build(&c);
-            let f = build_features(&keep, &c, &lv, &si, &vwap_core::FeaturesConfig::default());
+            // a schedule inside the series, so the calendar columns are defined
+            let cal = calendar_inside(bars);
+            let f = build_features(&keep, &c, &lv, &si, &cal, &vwap_core::FeaturesConfig::default());
             (keep, f)
         };
         let (ea, fa) = table(&a);
@@ -83,6 +100,7 @@ fn features_are_defined_for_a_typical_event() {
         &c,
         &LevelTable::build(&bars, &vwap_core::FeaturesConfig::default()),
         &SessionIndex::build(&c),
+        &CalendarTable::disabled(),
         &vwap_core::FeaturesConfig::default(),
     );
     // late events on later days have prior day levels and relative volume
@@ -124,10 +142,12 @@ fn golden_feature_fingerprint() {
             &c,
             &LevelTable::build(&bars, &vwap_core::FeaturesConfig::default()),
             &SessionIndex::build(&c),
+            &CalendarTable::disabled(),
             &vwap_core::FeaturesConfig::default(),
         );
         bytes.extend((events.len() as u64).to_le_bytes());
-        for col in &f.cols {
+        // the 18 original columns; the calendar columns have their own fingerprint below
+        for col in f.cols.iter().take(18) {
             for x in col {
                 bytes.extend(x.to_bits().to_le_bytes());
             }
@@ -137,5 +157,45 @@ fn golden_feature_fingerprint() {
     assert_eq!(
         hash, "6964c46b48b653d076962b26156e6b2a017e32f2ca887da68d474cc3803ce023",
         "feature fingerprint"
+    );
+}
+
+/// The same fingerprint for the nine calendar columns, with a schedule inside the series. The 18
+/// original columns keep their own fingerprint above, so appending columns changed nothing there.
+#[test]
+fn golden_calendar_fingerprint() {
+    let steps: Vec<i32> = (0..DAYS * PER_DAY)
+        .map(|i| ((i * 7919) % 41) as i32 - 20)
+        .collect();
+    let weights: Vec<u8> = (0..DAYS * PER_DAY).map(|i| (i % 50) as u8).collect();
+    let bars = series(&steps, &weights);
+    let cfg = data_cfg();
+    let ev = events_cfg();
+    let params = event_params(&cfg, &ev);
+    let cal = calendar_inside(&bars);
+    let mut bytes: Vec<u8> = Vec::new();
+    for width in [5u32, 15] {
+        let c = build(&bars, &cfg, width, ev.atr_length);
+        let (events, _) = detect(&c, &params);
+        let f = build_features(
+            &events,
+            &c,
+            &LevelTable::build(&bars, &vwap_core::FeaturesConfig::default()),
+            &SessionIndex::build(&c),
+            &cal,
+            &vwap_core::FeaturesConfig::default(),
+        );
+        assert_eq!(f.cols.len(), 27);
+        bytes.extend((events.len() as u64).to_le_bytes());
+        for col in f.cols.iter().skip(18) {
+            for x in col {
+                bytes.extend(x.to_bits().to_le_bytes());
+            }
+        }
+    }
+    let hash = vwap_core::manifest::sha256_bytes(&bytes);
+    assert_eq!(
+        hash, "f9138f856fc7c793d96edcab131acf182d5fcdd5f168f6b1cf86f84b3cd2456e",
+        "calendar fingerprint"
     );
 }

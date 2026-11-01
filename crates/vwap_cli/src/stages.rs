@@ -211,7 +211,8 @@ pub fn features_build(config: &Path) -> Result<String> {
     let lab = vwap_core::load_labels_config(config)?;
     let feat = vwap_core::load_features_config(config)?;
     let clean = load_clean(&data)?;
-    let samples = vwap_dataset::assemble(&data, &ev, &lab, &feat, &clean.bars);
+    let calendar = crate::ctx::calendar_table(config, &feat)?;
+    let samples = vwap_dataset::assemble(&data, &ev, &lab, &feat, &calendar, &clean.bars);
     let rows = vwap_dataset::write_features(&samples, &ev.timeframes, Path::new(&feat.output_dir))?;
     let counts: Vec<(String, u64)> = rows
         .iter()

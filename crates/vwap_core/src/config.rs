@@ -389,6 +389,11 @@ pub struct FeaturesConfig {
     pub vol_ratio_scale: f64,
     /// Where `vwap features build` writes the exported feature tables.
     pub output_dir: String,
+    /// The calendar features K1 to K3 need the frozen snapshot of `vwap calendar fetch`. While
+    /// this is false they are NaN.
+    pub calendar_enabled: bool,
+    /// Cap of the minutes until and since a release.
+    pub calendar_cap_minutes: u32,
 }
 
 impl Default for FeaturesConfig {
@@ -405,6 +410,8 @@ impl Default for FeaturesConfig {
             time_block_edges: [570, 630, 840, 1020],
             vol_ratio_scale: 10_000.0,
             output_dir: "artifacts/features".into(),
+            calendar_enabled: false,
+            calendar_cap_minutes: 1440,
         }
     }
 }

@@ -27,7 +27,8 @@ fn samples(config: &Path) -> Result<(Vec<vwap_research::Sample>, String, vwap_co
     let lab = vwap_core::load_labels_config(config)?;
     let feat = vwap_core::load_features_config(config)?;
     let clean = load_clean(&data)?;
-    let s = vwap_research::data::assemble(&data, &ev, &lab, &feat, &clean.bars);
+    let calendar = crate::ctx::calendar_table(config, &feat)?;
+    let s = vwap_research::data::assemble(&data, &ev, &lab, &feat, &calendar, &clean.bars);
     Ok((s, clean.fingerprint, lab))
 }
 
@@ -49,7 +50,8 @@ fn world(config: &Path) -> Result<World> {
     let labels = vwap_core::load_labels_config(config)?;
     let feat = vwap_core::load_features_config(config)?;
     let clean = load_clean(&data)?;
-    let samples = vwap_dataset::assemble(&data, &ev, &labels, &feat, &clean.bars);
+    let calendar = crate::ctx::calendar_table(config, &feat)?;
+    let samples = vwap_dataset::assemble(&data, &ev, &labels, &feat, &calendar, &clean.bars);
     let coarse = ev
         .timeframes
         .iter()

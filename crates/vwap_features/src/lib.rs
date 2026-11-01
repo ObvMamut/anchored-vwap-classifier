@@ -5,10 +5,12 @@
     allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)
 )]
 
+pub mod calendar;
 pub mod features;
 pub mod levels;
 pub mod view;
 
+pub use calendar::{CALENDAR_COLUMNS, CalendarTable};
 pub use features::{FeatureTable, build_features, feature_names};
 pub use levels::LevelTable;
 pub use view::{CausalView, SessionIndex};

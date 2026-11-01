@@ -5,7 +5,7 @@ use chrono::{DateTime, Datelike};
 use vwap_core::{DataConfig, EventsConfig, FeaturesConfig, LabelsConfig};
 use vwap_data::CleanBars;
 use vwap_events::{build, detect, event_params};
-use vwap_features::{LevelTable, SessionIndex, build_features};
+use vwap_features::{CalendarTable, LevelTable, SessionIndex, build_features};
 use vwap_labels::{LabelParams, label_events};
 
 use crate::sample::Sample;
@@ -15,6 +15,7 @@ pub fn assemble(
     ev: &EventsConfig,
     lab: &LabelsConfig,
     feat: &FeaturesConfig,
+    calendar: &CalendarTable,
     bars: &CleanBars,
 ) -> Vec<Sample> {
     let params = event_params(data, ev);
@@ -31,7 +32,7 @@ pub fn assemble(
         let (labeled, _) = label_events(&events, &coarse, bars, &lp);
         let evs: Vec<_> = labeled.iter().map(|l| l.event.clone()).collect();
         let sessions = SessionIndex::build(&coarse);
-        let table = build_features(&evs, &coarse, &levels, &sessions, feat);
+        let table = build_features(&evs, &coarse, &levels, &sessions, calendar, feat);
         for (i, l) in labeled.iter().enumerate() {
             out.push(Sample {
                 width: w,

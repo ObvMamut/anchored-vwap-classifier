@@ -91,9 +91,10 @@ fn checks(config: &Path) -> Vec<Check> {
         vwap_core::load_strategy_config(config).map(|_| ()),
         vwap_core::load_backtest_config(config).map(|_| ()),
         vwap_core::load_report_config(config).map(|_| ()),
+        vwap_core::load_calendar_config(config).map(|_| ()),
     ];
     match loaded.iter().find_map(|r| r.as_ref().err()) {
-        None => c.push(ok("all 11 configuration files load and validate")),
+        None => c.push(ok("all 12 configuration files load and validate")),
         Some(e) => c.push(fail(format!("configuration: {e}"))),
     }
 
@@ -151,6 +152,24 @@ fn checks(config: &Path) -> Vec<Check> {
             Err(_) => c.push(warn(
                 "cleaned data not built yet: run `vwap data clean config`",
             )),
+        }
+    }
+    if let (Ok(feat), Ok(cal)) = (
+        vwap_core::load_features_config(config),
+        vwap_core::load_calendar_config(config),
+    ) {
+        if !feat.calendar_enabled {
+            c.push(ok("calendar features are off (no snapshot is used)"));
+        } else {
+            match vwap_calendar::read_snapshot(Path::new(&cal.output_dir)) {
+                Ok((e, _)) => c.push(ok(format!(
+                    "calendar snapshot matches its lock ({} releases)",
+                    e.len()
+                ))),
+                Err(e) => c.push(fail(format!(
+                    "calendar_enabled is true but the snapshot is unusable: {e}"
+                ))),
+            }
         }
     }
     if let Ok(ev) = vwap_core::load_events_config(config) {
