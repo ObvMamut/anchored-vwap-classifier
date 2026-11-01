@@ -2,19 +2,54 @@
 
 A Rust research pipeline that asks one question about Nasdaq 100 futures (NQ): when price touches the daily anchored VWAP on 5 or 15 minute bars, does anything known at the touch predict whether price rejects the VWAP, breaks through it, or goes nowhere, well enough to trade after costs?
 
-The pipeline cleans 1 minute bars, builds the anchored VWAP, detects touches, labels each touch with a volatility scaled triple barrier, compares VWAP touches with control levels, and then tests hypotheses under a protocol that limits false discoveries.
+The pipeline cleans 1 minute bars, builds the anchored VWAP, detects touches, labels each touch with a volatility scaled triple barrier, compares VWAP touches with control levels, and then tests hypotheses and trading strategies under a protocol that limits false discoveries.
 
-## Result
+**In short.** On the data in this repository no usable directional edge was found. Everything specified is built: the pipeline, the research protocol, calibrated models, purged walk forward validation, a cost aware backtest, the Deflated Sharpe Ratio and the Probability of Backtest Overfitting, a report and a calendar snapshot. The whole record is in git and can be reproduced with four commands (see the quick start).
 
-On the data in this repository the answer is **no usable directional edge was found**.
+## Contents
 
-* Gate 3a (do VWAP touches behave like touches of arbitrary levels?): yes, to within about 2 percentage points on the rejection rate. Reported, never decisive.
-* Gate 3b (does any pre registered hypothesis survive?): not passed. An omnibus screen found structure, but it is the clock driven chop rate, which has nothing to do with VWAP. Direction (rejection versus breakthrough) is not predictable from 18 features. Seven hypothesis cards were run on the discovery segment (2016 to 2021): five were dropped, two were left at "refine", none was promoted, so the confirmation and holdout segments were never used.
-* The only thread above noise is level confluence (a touch that coincides with prior day or overnight levels): +2.3 points for one coinciding level and +6.6 points for two or more. It is not significant and the data is too small to settle it.
+* [Result at a glance](#result-at-a-glance)
+* [How it fits together](#how-it-fits-together)
+* [Quick start](#quick-start)
+* [The data](#the-data)
+* [The pipeline](#the-pipeline)
+* [The research protocol](#the-research-protocol)
+* [Models, backtest, report and calendar](#models-backtest-report-and-calendar)
+* [Configuration](#configuration)
+* [Repository layout](#repository-layout)
+* [Where to read next](#where-to-read-next)
+* [Development](#development)
+* [Limitations and what is not built](#limitations-and-what-is-not-built)
 
-After the research loop the remaining stages (calibrated models, purged walk forward validation, a cost aware backtest, the Deflated Sharpe Ratio and the Probability of Backtest Overfitting, a report) were built and run on three baseline strategies (majority class, logistic regression, LightGBM) on both timeframes. The 15 minute models have genuine probability skill (pooled Brier skill score about 0.03), but it comes from range and clock features, the same chop structure as before. No threshold on the rejection probability earns more than the round trip cost of 2.8 ticks on out of fold data, so every fold abstained: no trades, nothing promoted.
+## Result at a glance
+
+| Stage | Question | Outcome | Record |
+|---|---|---|---|
+| Gate 3a | Do VWAP touches behave like touches of arbitrary levels? | Yes, to within about 2 percentage points on the rejection rate. Reported, never decisive. | `docs/DECISIONS.md`, section 11 |
+| Omnibus screen | Is there any predictive structure? | Yes, but it is the clock driven chop rate, which has nothing to do with VWAP. Direction is not predictable. | section 13 |
+| Gate 3b | Does any pre registered hypothesis survive? | Not passed. Seven cards on the discovery segment (2016 to 2021): five dropped, two left at refine, none promoted. Confirmation and holdout were never used. | section 14 |
+| Strategies S001 to S003 | Does a calibrated model, traded with costs, earn money out of sample? | No. Logistic: Brier skill 0.0011 (5 minute) and 0.0298 (15 minute). LightGBM: 0.0015 and 0.0274. Every fold abstained, so no trades. | section 16 |
+
+The 15 minute models have genuine probability skill, but it comes from range and clock features, the same chop structure as before. No threshold on the rejection probability earns more than the round trip cost of 2.8 ticks on out of fold data. The ledger holds 14 counted trials (the omnibus, 7 hypothesis cards and 6 strategy runs) and 0.0333 of the 0.05 alpha is spent.
+
+The only thread above noise is level confluence (a touch that coincides with prior day or overnight levels): +2.3 points for one coinciding level and +6.6 points for two or more. It is not significant and the data is too small to settle it.
 
 The full record is in `docs/DECISIONS.md` (sections 13, 14 and 16) and in `research/`.
+
+## How it fits together
+
+```
+data.parquet (1 minute bars)
+  => clean         cleaned bars, true UTC, quality and roll reports
+  => events        anchored VWAP, ATR, 5 and 15 minute bars, touches
+  => labels        rejection, breakthrough or chop (triple barrier)
+  => features      34 columns known at the touch
+  => baselines     control levels, gate 3a
+  => research      hypothesis cards: omnibus, discovery, confirmation, holdout
+  => strategies    walk forward, calibrated model, threshold, backtest, DSR and PBO
+  => report        summary and plots
+every research step appends to research/ledger.jsonl, which verify and replay check
+```
 
 ## Quick start
 
@@ -140,6 +175,21 @@ hypotheses/    one TOML card per hypothesis or strategy
 research/      the ledger, the card reports and the strategy summaries (tracked)
 data.parquet   the raw input
 ```
+
+## Where to read next
+
+| Document | What it owns |
+|---|---|
+| `docs/OPERATIONS.md` | Building, running, reproducing and troubleshooting |
+| `docs/PROTOCOL.md` | The research protocol: splits, cards, alpha budget, strategy cards |
+| `docs/DECISIONS.md` | Every decision and every result, in order |
+| `docs/ARCHITECTURE.md` | The crates and the data flow |
+| `docs/DATA.md`, `docs/EVENTS.md`, `docs/LABELING.md` | Cleaning, touches and the triple barrier labels |
+| `docs/FEATURES.md` | The 34 feature columns and their causal proofs |
+| `docs/BASELINES.md` | Control levels and gate 3a |
+| `docs/MODELING.md`, `docs/VALIDATION.md`, `docs/BACKTEST.md` | Models and calibration, walk forward, DSR and PBO, fills and costs |
+| `docs/ROADMAP.md`, `docs/GLOSSARY.md` | The phase plan with its gates, and the symbols |
+| `CLAUDE.md` | Conventions for anyone changing the code |
 
 ## Development
 
