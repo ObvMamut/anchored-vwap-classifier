@@ -1,0 +1,8 @@
+id = "H010"
+family = "approach"
+mechanism = "Momentum through the level. A long run of consecutive bars closing on one side of the VWAP before the touch is a slow grind with one sided flow, and that flow should carry through the level instead of being rejected there. The feature is the number of bars of the current run. Predicted negative for the top tercile, which means fewer rejections than the other touches. The top tercile is a third of all touches, above the 4 per week the owner requires on both timeframes."
+outcome = "rejection_given_resolved"
+feature = "bars_on_side"
+rule = "top_tercile"
+direction = "negative"
+timeframes = [5, 15]
