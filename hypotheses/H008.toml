@@ -1,0 +1,8 @@
+id = "H008"
+family = "approach"
+mechanism = "Stretch exhaustion. When price has travelled many VWAP band widths away from the VWAP before it comes back, the move that carried it there is spent, so the touch should be rejected more often than a touch that follows a shallow approach. The feature is the largest distance of the approach run from the VWAP in units of the VWAP standard deviation. Predicted positive for the top tercile. The top tercile is a third of all touches, about 12 per week on 5 minute and 5 per week on 15 minute bars, above the 4 per week the owner requires."
+outcome = "rejection_given_resolved"
+feature = "band_pos_max"
+rule = "top_tercile"
+direction = "positive"
+timeframes = [5, 15]
