@@ -217,13 +217,14 @@ pub fn benchmark(config: &Path, grid: bool) -> Result<String> {
         ));
         for p in &b.results {
             out.push_str(&format!("  {}\n", p.policy));
-            out.push_str("    fold  touches trades  rej/resolved  win  win net  avg gross  avg net  target  breakeven  edge\n");
+            out.push_str("    fold  touches trades  per week  rej/resolved  win  win net  avg gross  avg net  target  breakeven  edge\n");
             for r in p.folds.iter().chain(std::iter::once(&p.pooled)) {
                 let label = r.fold.map_or("all".to_string(), |k| (k + 1).to_string());
                 out.push_str(&format!(
-                    "    {label:>4}  {:>7} {:>6}  {:>12}  {:>5} {:>7}  {:>9} {:>8}  {:>7} {:>9} {:>6}\n",
+                    "    {label:>4}  {:>7} {:>6}  {:>8}  {:>12}  {:>5} {:>7}  {:>9} {:>8}  {:>7} {:>9} {:>6}\n",
                     r.touches,
                     r.trades,
+                    f(r.trades_per_week, 1),
                     f(100.0 * r.rejection_share_resolved, 1),
                     f(100.0 * r.win_rate, 1),
                     f(100.0 * r.win_rate_net, 1),

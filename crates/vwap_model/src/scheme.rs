@@ -29,6 +29,8 @@ pub enum Family {
     Lgbm,
 }
 
+const WEEK_US: i64 = 7 * 24 * 3_600_000_000;
+
 /// All events of one timeframe that may be used (labelled, not ambiguous), in any order.
 pub struct Table<'a> {
     pub x: &'a Matrix,
@@ -49,6 +51,8 @@ pub struct Params<'a> {
     /// only. Every touch is still predicted, and the threshold is tuned on all of them. The
     /// three class objective is dominated by chop, which is predictable from the clock.
     pub direction: bool,
+    /// Average trades per calendar week the threshold must allow on the out of fold events.
+    pub min_trades_per_week: Option<f64>,
 }
 
 /// One test event for the beeswarm: its feature values and the contribution of each feature to
@@ -303,12 +307,26 @@ pub fn run_fold(
         .iter()
         .map(|(e, _)| t.sessions.get(*e).copied().unwrap_or(0))
         .collect();
+    // the selected touches needed for the trade rate over the weeks the out of fold events span
+    let min_trades = p.min_trades_per_week.map(|rate| {
+        let (lo, hi) = honest
+            .iter()
+            .filter_map(|(e, _)| t.spans.get(*e).map(|s| s.t_close_us))
+            .fold((i64::MAX, i64::MIN), |(a, b), x| (a.min(x), b.max(x)));
+        let weeks = if hi > lo {
+            (hi - lo) as f64 / WEEK_US as f64
+        } else {
+            0.0
+        };
+        (rate * weeks).ceil() as usize
+    });
     let tau = tune_tau(
         &p_rej,
         &net,
         &sessions,
         p.cfg,
         crate::scheme::child_seed(p.seed, "tau"),
+        min_trades,
     );
 
     // 5: final fit, final calibrator, test predictions
@@ -482,6 +500,7 @@ mod tests {
             embargo_us: 2 * HOUR,
             seed: child_seed(cfg.seed, "test"),
             direction: false,
+            min_trades_per_week: None,
         };
         run_fold(family, &t, &train, &test, &p).unwrap()
     }
@@ -610,6 +629,7 @@ mod tests {
             embargo_us: 2 * HOUR,
             seed: child_seed(c.seed, "direction"),
             direction: true,
+            min_trades_per_week: None,
         };
         let f = run_fold(Family::Logistic, &t, &train, &test, &p).unwrap();
         // every test touch gets a probability, chop included
@@ -649,6 +669,7 @@ mod tests {
             embargo_us: 2 * HOUR,
             seed: 1,
             direction: false,
+            min_trades_per_week: None,
         };
         let train: Vec<usize> = (0..80).collect();
         let test: Vec<usize> = (80..100).collect();

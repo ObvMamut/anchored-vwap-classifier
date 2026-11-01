@@ -65,6 +65,10 @@ pub struct StrategyCard {
     pub horizon_5m: Option<usize>,
     #[serde(default)]
     pub horizon_15m: Option<usize>,
+    /// Average trades per calendar week the strategy must make over its test windows. Unset
+    /// means no requirement (the behaviour of the first three strategy cards).
+    #[serde(default)]
+    pub min_trades_per_week: Option<f64>,
 }
 
 impl StrategyCard {
@@ -95,6 +99,12 @@ impl StrategyCard {
             || self.horizon_15m == Some(0)
         {
             return bad("barrier multiples and horizons must be positive");
+        }
+        if self
+            .min_trades_per_week
+            .is_some_and(|r| r.is_nan() || r <= 0.0)
+        {
+            return bad("min_trades_per_week must be positive");
         }
         Ok(())
     }

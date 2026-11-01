@@ -96,6 +96,7 @@ fn configs<'a>(env: &'a Env, card: &StrategyCard) -> Configs<'a> {
         validation: env.validation,
         backtest: env.backtest,
         direction: card.direction(),
+        min_trades_per_week: card.min_trades_per_week,
     }
 }
 
@@ -194,7 +195,11 @@ pub fn execute_strategy(
         let others = read_series(Path::new(&env.research.strategies_dir))?;
         let n_trials = ledger.trials()? + 1;
         let d = dsr_pbo(&own, &others, n_trials, env.validation);
-        let (verdict, failed) = decide(own_failures(&result, env.validation), &d, env.validation);
+        let (verdict, failed) = decide(
+            own_failures(&result, env.validation, card.min_trades_per_week),
+            &d,
+            env.validation,
+        );
         let summary = Summary {
             card_id: &card.id,
             card_sha256: &hash,
@@ -290,6 +295,7 @@ fn evaluate_segment(
             validation: &v,
             backtest: env.backtest,
             direction: card.direction(),
+            min_trades_per_week: card.min_trades_per_week,
         },
     )
 }
@@ -359,7 +365,11 @@ pub fn execute_strategy_confirm(
         b.holdout_start,
         alpha,
     )?;
-    let failed = own_failures(&result, &at_alpha(env.validation, alpha));
+    let failed = own_failures(
+        &result,
+        &at_alpha(env.validation, alpha),
+        card.min_trades_per_week,
+    );
     let verdict = if failed.is_empty() {
         Verdict::Confirmed
     } else {
@@ -455,7 +465,11 @@ pub fn execute_strategy_holdout(
     pool.extend_from_slice(hold.samples());
     let alpha = env.research.alpha_total;
     let result = evaluate_segment(env, &card, width, &pool, b.holdout_start, end_us, alpha)?;
-    let failed = own_failures(&result, &at_alpha(env.validation, alpha));
+    let failed = own_failures(
+        &result,
+        &at_alpha(env.validation, alpha),
+        card.min_trades_per_week,
+    );
     let verdict = if failed.is_empty() {
         Verdict::Confirmed
     } else {

@@ -32,6 +32,8 @@ pub struct Configs<'a> {
     pub backtest: &'a BacktestConfig,
     /// Train, select and score on resolved touches (rejection against breakthrough) only.
     pub direction: bool,
+    /// Average trades per calendar week required of the run; also constrains the threshold.
+    pub min_trades_per_week: Option<f64>,
 }
 
 /// Where the test windows lie and how long the label horizon is.
@@ -65,6 +67,8 @@ pub struct FoldReport {
     pub precision_at_tau: Option<f64>,
     pub n_signals: usize,
     pub n_trades: usize,
+    /// Trades per calendar week of the fold's test window.
+    pub trades_per_week: Option<f64>,
     /// Mean net ticks of the fold's trades at the configured costs.
     pub expectancy_net_ticks: Option<f64>,
 }
@@ -151,6 +155,9 @@ pub struct StrategyResult {
     pub pooled: Option<Pooled>,
     pub backtest: Metrics,
     pub trade_stats: TradeStats,
+    /// Calendar weeks of the test windows and the average trades per week over them.
+    pub weeks: f64,
+    pub trades_per_week: f64,
     pub expectancy_interval: (f64, f64),
     pub sweep: Vec<SweepCell>,
     pub break_even_slippage: f64,
@@ -173,6 +180,8 @@ pub struct StrategyResult {
     /// Candidates scored by the inner folds over all folds, counted as trials of the family.
     pub candidates_scored: usize,
 }
+
+const WEEK_US: i64 = 7 * 24 * 3_600_000_000;
 
 fn mode_of(m: WalkMode) -> Mode {
     match m {
@@ -283,6 +292,7 @@ pub fn evaluate(
             precision_at_tau: None,
             n_signals: 0,
             n_trades: 0,
+            trades_per_week: None,
             expectancy_net_ticks: None,
         };
         let params = Params {
@@ -291,6 +301,7 @@ pub fn evaluate(
             embargo_us,
             seed: child_seed(cfg.strategy.seed, &format!("{card_id}/{width}/{}", sp.fold)),
             direction: cfg.direction,
+            min_trades_per_week: cfg.min_trades_per_week,
         };
         if sp.test.is_empty() {
             rep.abstained = Some("no test events".into());
@@ -460,6 +471,10 @@ pub fn evaluate(
                 .collect()
         })
         .collect();
+    let total_weeks: f64 = splits
+        .iter()
+        .map(|sp| (sp.test_end_us - sp.test_start_us) as f64 / WEEK_US as f64)
+        .sum();
     let (slip, comm) = (cfg.backtest.slippage_ticks, cfg.backtest.commission_usd);
     for rep in &mut folds {
         let net_f: Vec<f64> = outcome
@@ -469,6 +484,8 @@ pub fn evaluate(
             .map(|t| t.net_ticks(slip, comm))
             .collect();
         rep.n_trades = net_f.len();
+        let fold_weeks = (rep.test_end_us - rep.test_start_us) as f64 / WEEK_US as f64;
+        rep.trades_per_week = (fold_weeks > 0.0).then(|| net_f.len() as f64 / fold_weeks);
         rep.expectancy_net_ticks =
             (!net_f.is_empty()).then(|| net_f.iter().sum::<f64>() / net_f.len() as f64);
     }
@@ -584,6 +601,8 @@ pub fn evaluate(
         pooled,
         backtest: bt,
         trade_stats,
+        weeks: total_weeks,
+        trades_per_week: outcome.trades.len() as f64 / total_weeks,
         expectancy_interval: ci,
         sweep: sweep(&outcome.trades, cfg.backtest),
         break_even_slippage: break_even_slippage(&outcome.trades, comm),
@@ -655,6 +674,7 @@ mod tests {
                 validation: &s.validation,
                 backtest: &s.backtest,
                 direction: false,
+                min_trades_per_week: None,
             },
         )
         .unwrap()
@@ -678,6 +698,7 @@ mod tests {
                 validation: &s.validation,
                 backtest: &s.backtest,
                 direction: true,
+                min_trades_per_week: None,
             },
         )
         .unwrap()
@@ -697,6 +718,58 @@ mod tests {
         // noise has no edge: the win rate does not clear the break even rate
         let n = run_direction(false, 9);
         assert!(n.pooled.as_ref().unwrap().bss_interval.0 <= 0.0);
+    }
+
+    fn run_rate(rate: Option<f64>) -> StrategyResult {
+        let s = setup();
+        let m = market(3600, true, 1, s.geom.range.0, s.geom.range.1);
+        let idx: Vec<usize> = (0..feature_names().len()).collect();
+        evaluate(
+            "S902",
+            Family::Logistic,
+            15,
+            &idx,
+            &m.samples,
+            &m.bars,
+            &m.one,
+            &s.geom,
+            &Configs {
+                strategy: &s.strategy,
+                validation: &s.validation,
+                backtest: &s.backtest,
+                direction: false,
+                min_trades_per_week: rate,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_required_trade_rate_forces_more_trades_or_an_abstention_and_fails_the_gate_if_missed() {
+        let free = run_rate(None);
+        assert!(free.weeks > 100.0 && free.trades_per_week > 0.0);
+        assert!(free.folds.iter().all(|f| f.trades_per_week.is_some()));
+        // a rate the free run already meets leaves it alone
+        let met = run_rate(Some(free.trades_per_week * 0.5));
+        assert!(met.trades_per_week >= free.trades_per_week * 0.5);
+        let v = setup().validation;
+        let need = Some(free.trades_per_week * 0.5);
+        assert!(
+            crate::strategy::gates::own_failures(&met, &v, need)
+                .iter()
+                .all(|m| !m.contains("trades per week"))
+        );
+        // a rate far above what the signal can supply: folds abstain and the gate says so
+        let hard = run_rate(Some(500.0));
+        assert!(hard.trades_per_week < 500.0);
+        let why = crate::strategy::gates::own_failures(&hard, &v, Some(500.0));
+        assert!(why.iter().any(|m| m.contains("trades per week")), "{why:?}");
+        // without a requirement the gate never mentions the rate
+        assert!(
+            crate::strategy::gates::own_failures(&free, &v, None)
+                .iter()
+                .all(|m| !m.contains("trades per week"))
+        );
     }
 
     #[test]
@@ -801,6 +874,7 @@ mod tests {
                 validation: &s.validation,
                 backtest: &s.backtest,
                 direction: false,
+                min_trades_per_week: None,
             },
         );
         assert!(r.is_err());

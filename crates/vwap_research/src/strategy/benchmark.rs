@@ -21,6 +21,8 @@ use crate::error::ResearchError;
 use crate::split::{Bounds, DiscoveryView};
 use crate::strategy::exec::Env;
 
+const WEEK_US: i64 = 7 * 24 * 3_600_000_000;
+
 /// Break even win rate for a target and a stop of `target_ticks` and `stop_ticks` and a round
 /// trip cost of `kappa_ticks`.
 pub fn breakeven_win_rate(kappa_ticks: f64, target_ticks: f64, stop_ticks: f64) -> f64 {
@@ -33,6 +35,8 @@ pub struct Row {
     pub fold: Option<usize>,
     pub touches: usize,
     pub trades: usize,
+    /// Trades per calendar week of the window (or of all the windows for the pooled row).
+    pub trades_per_week: f64,
     /// Rejection share among the test touches that hit a barrier.
     pub rejection_share_resolved: f64,
     /// Share of trades with a gross result above zero.
@@ -78,6 +82,7 @@ fn row(
     fold: Option<usize>,
     trades: &[&Trade],
     touches: &[&Sample],
+    weeks: f64,
     slip: f64,
     comm: f64,
     kappa: f64,
@@ -105,6 +110,11 @@ fn row(
         fold,
         touches: touches.len(),
         trades: n,
+        trades_per_week: if weeks > 0.0 {
+            n as f64 / weeks
+        } else {
+            f64::NAN
+        },
         rejection_share_resolved: if rej + brk == 0 {
             f64::NAN
         } else {
@@ -234,11 +244,16 @@ pub fn run_benchmark(env: &Env, samples: &[Sample]) -> Result<Vec<BenchmarkResul
             let mut folds = Vec::new();
             for (sp, touches) in splits.iter().zip(&by_fold) {
                 let t: Vec<&Trade> = trades.iter().filter(|t| t.fold == sp.fold).collect();
-                folds.push(row(Some(sp.fold), &t, touches, slip, comm, kappa));
+                let weeks = (sp.test_end_us - sp.test_start_us) as f64 / WEEK_US as f64;
+                folds.push(row(Some(sp.fold), &t, touches, weeks, slip, comm, kappa));
             }
             let all_touches: Vec<&Sample> = by_fold.iter().flatten().copied().collect();
             let all: Vec<&Trade> = trades.iter().collect();
-            let pooled = row(None, &all, &all_touches, slip, comm, kappa);
+            let all_weeks: f64 = splits
+                .iter()
+                .map(|sp| (sp.test_end_us - sp.test_start_us) as f64 / WEEK_US as f64)
+                .sum();
+            let pooled = row(None, &all, &all_touches, all_weeks, slip, comm, kappa);
             let interval = expectancy_interval(
                 &trades,
                 slip,

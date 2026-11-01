@@ -30,7 +30,10 @@ pub fn tune_tau(
     sessions: &[i32],
     cfg: &StrategyConfig,
     seed: u64,
+    min_trades: Option<usize>,
 ) -> TauChoice {
+    // the configured minimum, or more when the card asks for a trade rate
+    let n_min = cfg.min_trades_tau.max(min_trades.unwrap_or(0));
     let mut table = Vec::new();
     let mut best: Option<(f64, f64)> = None;
     for tau in cfg.tau_grid() {
@@ -47,7 +50,7 @@ pub fn tune_tau(
                 / n as f64
         };
         let mut lcb = f64::NAN;
-        if n >= cfg.min_trades_tau {
+        if n >= n_min {
             let draws = cluster_draws(sessions, cfg.tau_bootstrap_draws, seed, |rows| {
                 let (mut s, mut c) = (0.0, 0usize);
                 for &i in rows {
@@ -101,7 +104,7 @@ mod tests {
     #[test]
     fn an_informative_score_gets_a_threshold_near_the_break_even() {
         let (p, net, s) = informative(4000, 1);
-        let c = tune_tau(&p, &net, &s, &cfg(), 7);
+        let c = tune_tau(&p, &net, &s, &cfg(), 7, None);
         let tau = c.tau.expect("a threshold");
         assert!((0.5..=0.8).contains(&tau), "tau = {tau}");
         let row = c.table.iter().find(|r| r.tau == tau).unwrap();
@@ -111,7 +114,7 @@ mod tests {
     #[test]
     fn too_few_trades_make_the_fold_abstain() {
         let (p, net, s) = informative(60, 2);
-        let c = tune_tau(&p, &net, &s, &cfg(), 7);
+        let c = tune_tau(&p, &net, &s, &cfg(), 7, None);
         assert!(c.tau.is_none());
         assert!(c.table.iter().all(|r| r.lcb.is_nan()));
         assert_eq!(c.table.len(), cfg().tau_grid().len());
@@ -124,20 +127,53 @@ mod tests {
             *x = -x.abs() - 1.0;
         }
         let strict = cfg();
-        let c = tune_tau(&p, &net, &s, &strict, 7);
+        let c = tune_tau(&p, &net, &s, &strict, 7, None);
         assert!(c.tau.is_none());
         // the table is still reported
         assert!(c.table.iter().any(|r| r.lcb.is_finite()));
         let mut literal = cfg();
         literal.tau_require_positive_lcb = false;
-        assert!(tune_tau(&p, &net, &s, &literal, 7).tau.is_some());
+        assert!(tune_tau(&p, &net, &s, &literal, 7, None).tau.is_some());
+    }
+
+    #[test]
+    fn a_trade_rate_raises_the_minimum_number_of_selected_touches() {
+        let (p, net, s) = informative(4000, 12);
+        let free = tune_tau(&p, &net, &s, &cfg(), 7, None);
+        let tau_free = free.tau.expect("a threshold");
+        let n_free = free
+            .table
+            .iter()
+            .find(|r| r.tau == tau_free)
+            .unwrap()
+            .n_trades;
+        // ask for more trades than the best free threshold selects: it must move down or abstain
+        let asked = tune_tau(&p, &net, &s, &cfg(), 7, Some(n_free + 200));
+        if let Some(t) = asked.tau {
+            let n = asked.table.iter().find(|r| r.tau == t).unwrap().n_trades;
+            assert!(n >= n_free + 200 && t < tau_free);
+        }
+        // every row below the required count has no bound and so cannot be chosen
+        assert!(
+            asked
+                .table
+                .iter()
+                .filter(|r| r.n_trades < n_free + 200)
+                .all(|r| r.lcb.is_nan())
+        );
+        // more than the sample holds: the fold abstains
+        assert!(
+            tune_tau(&p, &net, &s, &cfg(), 7, Some(10_000))
+                .tau
+                .is_none()
+        );
     }
 
     #[test]
     fn the_choice_is_reproducible_for_one_seed() {
         let (p, net, s) = informative(1500, 3);
-        let a = tune_tau(&p, &net, &s, &cfg(), 11);
-        let b = tune_tau(&p, &net, &s, &cfg(), 11);
+        let a = tune_tau(&p, &net, &s, &cfg(), 11, None);
+        let b = tune_tau(&p, &net, &s, &cfg(), 11, None);
         assert_eq!(a.tau, b.tau);
         for (x, y) in a.table.iter().zip(&b.table) {
             assert_eq!(x.lcb.to_bits(), y.lcb.to_bits());
