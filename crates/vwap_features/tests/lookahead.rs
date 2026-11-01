@@ -232,7 +232,10 @@ fn golden_appended_fingerprint() {
         }
     }
     let hash = vwap_core::manifest::sha256_bytes(&bytes);
-    assert_eq!(hash, "ca55e86028a132861e896f00963bbc41978db19906a94ff7cad4a6d3b9bfdc73", "appended fingerprint");
+    assert_eq!(
+        hash, "ca55e86028a132861e896f00963bbc41978db19906a94ff7cad4a6d3b9bfdc73",
+        "appended fingerprint"
+    );
 }
 
 #[test]

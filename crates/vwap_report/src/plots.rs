@@ -9,6 +9,7 @@ use std::fs;
 use std::path::Path;
 
 use plotters::prelude::*;
+use plotters::style::text_anchor::{HPos, Pos, VPos};
 use plotters::style::{FontStyle, register_font};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -246,7 +247,7 @@ pub fn draw_reliability(
             ))
             .map_err(draw_err)?
             .label(c.label.clone())
-            .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], col));
+            .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], col.stroke_width(3)));
         chart
             .draw_series(
                 c.points
@@ -380,6 +381,16 @@ pub fn draw_importance(
             ))
             .map_err(draw_err)?;
     }
+    // the feature names, right aligned left of the plot area
+    let style = ("sans-serif", 16)
+        .into_font()
+        .color(&BLACK)
+        .pos(Pos::new(HPos::Right, VPos::Center));
+    for (i, b) in bars.iter().enumerate() {
+        let (px, py) = chart.backend_coord(&(0.0, n as f64 - 0.5 - i as f64));
+        root.draw(&Text::new(b.feature.clone(), (px - 8, py), style.clone()))
+            .map_err(draw_err)?;
+    }
     root.present().map_err(draw_err)
 }
 
@@ -435,6 +446,15 @@ pub fn draw_beeswarm(
                 };
                 Circle::new((p.phi, y + p.jitter), 3, col.filled())
             }))
+            .map_err(draw_err)?;
+    }
+    let style = ("sans-serif", 16)
+        .into_font()
+        .color(&BLACK)
+        .pos(Pos::new(HPos::Right, VPos::Center));
+    for (i, r) in rows.iter().enumerate() {
+        let (px, py) = chart.backend_coord(&(-m, n as f64 - 0.5 - i as f64));
+        root.draw(&Text::new(r.feature.clone(), (px - 8, py), style.clone()))
             .map_err(draw_err)?;
     }
     root.present().map_err(draw_err)

@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde::Serialize;
 use vwap_core::ValidationConfig;
-use vwap_validation::{dsr, expected_max_sharpe, kurtosis, pbo, sharpe, skewness};
+use vwap_validation::{dsr, expected_max_sharpe, kurtosis, pbo, sample_sd, sharpe, skewness};
 
 use crate::error::ResearchError;
 use crate::ledger::Verdict;
@@ -149,7 +149,10 @@ pub fn dsr_pbo(own: &Series, others: &[Series], n_trials: usize, v: &ValidationC
         notes.push("fewer than 2 days: DSR undefined".into());
         None
     };
-    // PBO over the series that share the calendar of `own`
+    // PBO over the series that share the calendar of `own`. Series that abstained throughout are
+    // genuine trials with zero PnL and stay in. A strategy that itself never traded has nothing
+    // to assess: its zeros tie with every other idle series and the ranks would be arbitrary.
+    let own_traded = sample_sd(&own.daily_pnl) > 0.0;
     let mut cols: Vec<&Series> = others
         .iter()
         .filter(|s| s.key != own.key && s.daily_pnl.len() == t)
@@ -168,7 +171,10 @@ pub fn dsr_pbo(own: &Series, others: &[Series], n_trials: usize, v: &ValidationC
                 .collect()
         })
         .collect();
-    let pbo_value = if cols.len() < v.pbo_min_trials {
+    let pbo_value = if !own_traded {
+        notes.push("PBO undefined: this strategy made no trades".into());
+        None
+    } else if cols.len() < v.pbo_min_trials {
         notes.push(format!(
             "PBO undefined: {} series, at least {} are needed",
             cols.len(),
@@ -319,6 +325,26 @@ mod tests {
         let d = dsr_pbo(&own, &others, 6, &v());
         assert!(d.notes.iter().any(|n| n.contains("different calendar")));
         assert!(d.pbo.is_some());
+    }
+
+    #[test]
+    fn idle_series_stay_in_the_pbo_but_an_idle_strategy_has_no_pbo() {
+        // one trading strategy among three that abstained throughout: a real trial set
+        let own = series("S009_15m", noise(7, 600, 30.0));
+        let mut others: Vec<Series> = (0..3)
+            .map(|k| series(&format!("S00{k}_15m"), vec![0.0; 600]))
+            .collect();
+        others.push(own.clone());
+        let d = dsr_pbo(&own, &others, 6, &v());
+        assert!(d.pbo.unwrap() <= 0.2, "{d:?}");
+        // a strategy with no trades has no PBO whatever the others did
+        let idle = series("S010_15m", vec![0.0; 600]);
+        let many: Vec<Series> = (0..5)
+            .map(|k| series(&format!("S00{k}_15m"), noise(30 + k as u64, 600, 0.0)))
+            .collect();
+        let d = dsr_pbo(&idle, &many, 6, &v());
+        assert!(d.pbo.is_none());
+        assert!(d.notes.iter().any(|n| n.contains("made no trades")));
     }
 
     #[test]
