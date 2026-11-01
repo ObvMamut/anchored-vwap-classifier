@@ -276,6 +276,10 @@ pub fn load_baselines_config(dir: &Path) -> Result<BaselinesConfig, CoreError> {
     read_toml(dir, "baselines.toml")
 }
 
+fn default_strategies_dir() -> String {
+    "research/strategies".into()
+}
+
 /// `config/research.toml`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -288,6 +292,9 @@ pub struct ResearchConfig {
     pub cards_dir: String,
     pub ledger_path: String,
     pub report_dir: String,
+    /// Tracked summaries of the strategy runs (`vwap research strategy`).
+    #[serde(default = "default_strategies_dir")]
+    pub strategies_dir: String,
     pub alpha_total: f64,
     pub alpha_omnibus: f64,
     pub max_cards: usize,

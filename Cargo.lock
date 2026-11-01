@@ -4303,6 +4303,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror",
  "toml",
+ "vwap_backtest",
  "vwap_baselines",
  "vwap_core",
  "vwap_data",
@@ -4310,6 +4311,7 @@ dependencies = [
  "vwap_events",
  "vwap_features",
  "vwap_labels",
+ "vwap_model",
  "vwap_validation",
 ]
 

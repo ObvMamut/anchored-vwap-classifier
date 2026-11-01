@@ -116,6 +116,9 @@ pub struct StrategyConfig {
     pub tau_lcb_quantile: f64,
     /// Draws of that bootstrap.
     pub tau_bootstrap_draws: usize,
+    /// A fold abstains unless the best threshold has a bootstrap lower bound above zero on the
+    /// out of fold data. Without it a useless model still trades at its least bad threshold.
+    pub tau_require_positive_lcb: bool,
     pub lgbm_grid: Vec<LgbmPoint>,
 }
 

@@ -16,6 +16,7 @@ tau_step = 0.01
 min_trades_tau = 100
 tau_lcb_quantile = 0.2
 tau_bootstrap_draws = 500
+tau_require_positive_lcb = true
 
 [[lgbm_grid]]
 num_leaves = 4

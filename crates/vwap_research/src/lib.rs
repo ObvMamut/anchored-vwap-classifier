@@ -15,6 +15,7 @@ pub mod report;
 pub mod runner;
 pub mod selftest;
 pub mod split;
+pub mod strategy;
 
 pub use card::{Card, Outcome, RuleKind};
 pub use error::ResearchError;

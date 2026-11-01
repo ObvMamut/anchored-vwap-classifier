@@ -86,6 +86,60 @@ pub enum Entry {
         verdict: Verdict,
         time_utc: String,
     },
+    /// A strategy run on the discovery view: a model plus the backtest, one timeframe.
+    Strategy {
+        cycle: usize,
+        card_id: String,
+        sha256: String,
+        git_commit: String,
+        width: u32,
+        trials_added: usize,
+        /// Counted trials of the ledger when this one ran, itself included (the DSR's N).
+        n_trials: usize,
+        /// SHA256 of each configuration file the run read, by file name.
+        config_sha256: std::collections::BTreeMap<String, String>,
+        /// SHA256 of `<strategies_dir>/<id>_<w>m.json`.
+        summary_sha256: String,
+        #[serde(default)]
+        data_fingerprint: Option<String>,
+        n_trades: usize,
+        bss: Option<f64>,
+        net_expectancy_ticks: Option<f64>,
+        dsr: Option<f64>,
+        pbo: Option<f64>,
+        verdict: Verdict,
+        failed: Vec<String>,
+        time_utc: String,
+    },
+    /// The one shot confirmation of a promoted strategy on the confirmation segment.
+    StrategyConfirm {
+        cycle: usize,
+        card_id: String,
+        sha256: String,
+        git_commit: String,
+        width: u32,
+        summary_sha256: String,
+        net_expectancy_ticks: Option<f64>,
+        expectancy_lower: Option<f64>,
+        bss: Option<f64>,
+        verdict: Verdict,
+        failed: Vec<String>,
+        time_utc: String,
+    },
+    /// The single run of a strategy on the holdout segment.
+    StrategyHoldout {
+        card_id: String,
+        sha256: String,
+        git_commit: String,
+        width: u32,
+        summary_sha256: String,
+        net_expectancy_ticks: Option<f64>,
+        expectancy_lower: Option<f64>,
+        bss: Option<f64>,
+        verdict: Verdict,
+        failed: Vec<String>,
+        time_utc: String,
+    },
     /// A descriptive analysis that spends no alpha and cannot promote anything.
     Diagnostic {
         name: String,
@@ -170,7 +224,7 @@ impl Ledger {
             .iter()
             .filter(|e| matches!(e, Entry::Omnibus { .. }))
             .count();
-        Ok(omni.min(1) + self.cards_run()?.len())
+        Ok(omni.min(1) + self.cards_run()?.len() + self.strategies_run()?.len())
     }
 
     /// Cards whose last discovery verdict is PROMOTE.
@@ -191,7 +245,10 @@ impl Ledger {
             .filter(|e| {
                 !matches!(
                     e,
-                    Entry::Registered { .. } | Entry::Diagnostic { .. } | Entry::Holdout { .. }
+                    Entry::Registered { .. }
+                        | Entry::Diagnostic { .. }
+                        | Entry::Holdout { .. }
+                        | Entry::StrategyHoldout { .. }
                 )
             })
             .count()
@@ -220,6 +277,70 @@ impl Ledger {
             )));
         }
         Ok(())
+    }
+
+    /// `(card id, timeframe)` of every strategy run on the discovery view.
+    pub fn strategies_run(&self) -> Result<BTreeSet<(String, u32)>, ResearchError> {
+        Ok(self
+            .read_all()?
+            .into_iter()
+            .filter_map(|e| match e {
+                Entry::Strategy { card_id, width, .. } => Some((card_id, width)),
+                _ => None,
+            })
+            .collect())
+    }
+
+    /// The verdict of the discovery run of a strategy on one timeframe.
+    pub fn strategy_verdict(
+        &self,
+        card_id: &str,
+        width: u32,
+    ) -> Result<Option<Verdict>, ResearchError> {
+        Ok(self.read_all()?.into_iter().find_map(|e| match e {
+            Entry::Strategy {
+                card_id: c,
+                width: w,
+                verdict,
+                ..
+            } if c == card_id && w == width => Some(verdict),
+            _ => None,
+        }))
+    }
+
+    /// Strategies with a PROMOTE verdict, as `(card id, timeframe)`.
+    pub fn promoted_strategies(&self) -> Result<Vec<(String, u32)>, ResearchError> {
+        let mut out = Vec::new();
+        for (id, w) in self.strategies_run()? {
+            if self.strategy_verdict(&id, w)? == Some(Verdict::Promote) {
+                out.push((id, w));
+            }
+        }
+        Ok(out)
+    }
+
+    /// A one shot permit to confirm a promoted strategy on one timeframe.
+    pub fn strategy_confirm_permit(
+        &self,
+        card_id: &str,
+        width: u32,
+    ) -> Result<ConfirmPermit, ResearchError> {
+        if self.strategy_verdict(card_id, width)? != Some(Verdict::Promote) {
+            return Err(ResearchError::ConfirmNotAllowed(format!(
+                "{card_id} on {width}m has no PROMOTE verdict in the ledger"
+            )));
+        }
+        let already = self.read_all()?.iter().any(|e| {
+            matches!(e, Entry::StrategyConfirm { card_id: c, width: w, .. } if c == card_id && *w == width)
+        });
+        if already {
+            return Err(ResearchError::ConfirmNotAllowed(format!(
+                "{card_id} on {width}m was already confirmed once; confirmation is one shot"
+            )));
+        }
+        Ok(ConfirmPermit {
+            card_id: card_id.to_string(),
+        })
     }
 
     pub fn verdict_of(&self, card_id: &str) -> Result<Option<Verdict>, ResearchError> {

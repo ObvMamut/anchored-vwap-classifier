@@ -24,7 +24,9 @@ pub fn session_fixture(width: u32, rows: &[(f64, f64, f64, f64)]) -> (CoarseBars
         vwap_sd: vec![1.0; n],
         session: vec![1; n],
         trading_date: vec![2; n],
-        minute: (0..n as u16).map(|i| 1080 + width as u16 * i).collect(),
+        minute: (0..n)
+            .map(|i| ((1080 + width as usize * i) % 1440) as u16)
+            .collect(),
         n_minutes: vec![width as u8; n],
         flags: vec![0; n],
         atr: vec![2.0; n],

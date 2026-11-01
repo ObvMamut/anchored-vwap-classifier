@@ -98,6 +98,8 @@ vwap spotcheck config
 vwap research status config
 vwap research register H008 config
 vwap research run H008 config
+vwap research strategy S001 config      # a model plus the backtest, discovery segment only
+vwap research dsr config                # DSR and PBO over all counted trials
 vwap research confirm H008 config
 vwap research verify config
 vwap research replay all config

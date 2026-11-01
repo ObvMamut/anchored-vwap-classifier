@@ -17,6 +17,7 @@ pub use bootstrap::{cluster_draws, interval, percentile};
 pub use dsr::{dsr, expected_max_sharpe, probabilistic_sharpe};
 pub use pbo::{PboResult, pbo};
 pub use splits::{
-    EventSpan, InnerFold, Mode, Split, WalkForwardConfig, blocked_expanding, walk_forward,
+    EventSpan, InnerFold, Mode, Split, WalkForwardConfig, blocked_expanding, shift_months,
+    walk_forward,
 };
 pub use stats::{kurtosis, mean, sample_sd, sharpe, skewness};

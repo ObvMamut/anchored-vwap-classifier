@@ -27,7 +27,11 @@ pub fn guard_ledger(cfg: &ResearchConfig) -> Result<()> {
     if git(&["rev-parse", "--git-dir"]).is_err() {
         return Ok(()); // not a repository, nothing to protect
     }
-    for p in [cfg.ledger_path.as_str(), cfg.report_dir.as_str()] {
+    for p in [
+        cfg.ledger_path.as_str(),
+        cfg.report_dir.as_str(),
+        cfg.strategies_dir.as_str(),
+    ] {
         let ignored = std::process::Command::new("git")
             .args(["check-ignore", "-q", p])
             .status()

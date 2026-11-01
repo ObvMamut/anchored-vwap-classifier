@@ -9,6 +9,7 @@ holdout_start = "2023-10-01"
 cards_dir = "hypotheses"
 ledger_path = "research/ledger.jsonl"
 report_dir = "research/reports"
+strategies_dir = "research/strategies"
 
 # Alpha budget: omnibus plus a Bonferroni share per targeted card.
 alpha_total = 0.05

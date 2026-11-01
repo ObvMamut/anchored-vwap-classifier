@@ -70,10 +70,10 @@ pub fn tune_tau(
             lcb,
         });
     }
-    TauChoice {
-        tau: best.map(|b| b.0),
-        table,
-    }
+    let tau = best
+        .filter(|&(_, lcb)| !cfg.tau_require_positive_lcb || lcb > 0.0)
+        .map(|b| b.0);
+    TauChoice { tau, table }
 }
 
 #[cfg(test)]
@@ -115,6 +115,22 @@ mod tests {
         assert!(c.tau.is_none());
         assert!(c.table.iter().all(|r| r.lcb.is_nan()));
         assert_eq!(c.table.len(), cfg().tau_grid().len());
+    }
+
+    #[test]
+    fn a_fold_abstains_when_no_threshold_has_a_positive_lower_bound() {
+        let (p, mut net, s) = informative(3000, 4);
+        for x in &mut net {
+            *x = -x.abs() - 1.0;
+        }
+        let strict = cfg();
+        let c = tune_tau(&p, &net, &s, &strict, 7);
+        assert!(c.tau.is_none());
+        // the table is still reported
+        assert!(c.table.iter().any(|r| r.lcb.is_finite()));
+        let mut literal = cfg();
+        literal.tau_require_positive_lcb = false;
+        assert!(tune_tau(&p, &net, &s, &literal, 7).tau.is_some());
     }
 
     #[test]

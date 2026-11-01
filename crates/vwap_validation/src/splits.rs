@@ -45,7 +45,7 @@ pub struct Split {
 }
 
 /// Shifts a microsecond timestamp by whole calendar months (negative goes back).
-fn shift_months(us: i64, months: i64) -> Option<i64> {
+pub fn shift_months(us: i64, months: i64) -> Option<i64> {
     let dt = DateTime::<Utc>::from_timestamp_micros(us)?;
     let m = Months::new(u32::try_from(months.unsigned_abs()).ok()?);
     let out = if months >= 0 {

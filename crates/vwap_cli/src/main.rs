@@ -108,6 +108,10 @@ enum ResearchStage {
     Register { id: String, config: PathBuf },
     /// Run a registered card on the discovery segment.
     Run { id: String, config: PathBuf },
+    /// Run a registered strategy card (a model plus the backtest) on the discovery segment.
+    Strategy { id: String, config: PathBuf },
+    /// DSR and PBO of every strategy trial, with the trial count of the ledger.
+    Dsr { config: PathBuf },
     /// Show the ledger and the remaining budget.
     Status { config: PathBuf },
     /// Cycle 0: the omnibus predictive structure screen.
@@ -159,6 +163,8 @@ fn run() -> Result<()> {
         Command::Research { stage } => match stage {
             ResearchStage::Register { id, config } => research::register(&id, &config)?,
             ResearchStage::Run { id, config } => research::run(&id, &config)?,
+            ResearchStage::Strategy { id, config } => research::strategy(&id, &config)?,
+            ResearchStage::Dsr { config } => research::dsr(&config)?,
             ResearchStage::Status { config } => research::status(&config)?,
             ResearchStage::Omnibus { config } => research::omnibus(&config)?,
             ResearchStage::Diagnose { config } => research::diagnose(&config)?,

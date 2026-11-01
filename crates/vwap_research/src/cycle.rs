@@ -19,6 +19,10 @@ fn now() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
+fn fmt_opt(x: Option<f64>) -> String {
+    x.map_or_else(|| "n/a".into(), |v| format!("{v:.4}"))
+}
+
 /// Registers a card: stores its hash and the commit it was committed in. Registering an
 /// unchanged card again is a no op; a changed card is an error.
 pub fn register(
@@ -26,14 +30,25 @@ pub fn register(
     card_path: &Path,
     git_commit: &str,
 ) -> Result<String, ResearchError> {
-    let (card, hash) = load_card(card_path)?;
-    card.validate(feature_names())?;
+    let text = fs::read_to_string(card_path).map_err(|source| ResearchError::Io {
+        path: card_path.display().to_string(),
+        source,
+    })?;
+    let (id, hash) = if crate::strategy::is_strategy_text(&text) {
+        let (card, hash) = crate::strategy::load_strategy_card(card_path)?;
+        card.validate(feature_names())?;
+        (card.id, hash)
+    } else {
+        let (card, hash) = load_card(card_path)?;
+        card.validate(feature_names())?;
+        (card.id, hash)
+    };
     let ledger = Ledger::open(Path::new(&cfg.ledger_path));
-    match ledger.registered_hash(&card.id)? {
+    match ledger.registered_hash(&id)? {
         Some(h) if h == hash => return Ok(hash),
         Some(h) => {
             return Err(ResearchError::CardChanged {
-                id: card.id,
+                id,
                 registered: h,
                 current: hash,
             });
@@ -41,7 +56,7 @@ pub fn register(
         None => {}
     }
     ledger.append(&Entry::Registered {
-        card_id: card.id,
+        card_id: id,
         sha256: hash.clone(),
         git_commit: git_commit.to_string(),
         time_utc: now(),
@@ -263,6 +278,43 @@ pub fn status(cfg: &ResearchConfig) -> Result<String, ResearchError> {
                     "holdout: {card_id}: delta {delta:.4}, p {p:.4}, {verdict:?}\n"
                 ));
             }
+            Entry::Strategy {
+                cycle,
+                card_id,
+                width,
+                n_trades,
+                net_expectancy_ticks,
+                dsr,
+                pbo,
+                verdict,
+                ..
+            } => s.push_str(&format!(
+                "cycle {cycle}: strategy {card_id} on {width}m: {n_trades} trades, net {} ticks, DSR {}, PBO {}, {verdict:?}\n",
+                fmt_opt(*net_expectancy_ticks),
+                fmt_opt(*dsr),
+                fmt_opt(*pbo)
+            )),
+            Entry::StrategyConfirm {
+                cycle,
+                card_id,
+                width,
+                net_expectancy_ticks,
+                verdict,
+                ..
+            } => s.push_str(&format!(
+                "cycle {cycle}: strategy {card_id} on {width}m confirmation: net {} ticks, {verdict:?}\n",
+                fmt_opt(*net_expectancy_ticks)
+            )),
+            Entry::StrategyHoldout {
+                card_id,
+                width,
+                net_expectancy_ticks,
+                verdict,
+                ..
+            } => s.push_str(&format!(
+                "holdout: strategy {card_id} on {width}m: net {} ticks, {verdict:?}\n",
+                fmt_opt(*net_expectancy_ticks)
+            )),
             Entry::Diagnostic { name, note, .. } => {
                 s.push_str(&format!("diagnostic {name}: {note}\n"));
             }
@@ -306,6 +358,7 @@ pub fn verify(cfg: &ResearchConfig) -> Result<VerifyReport, ResearchError> {
     let mut problems = Vec::new();
     let mut registered: std::collections::BTreeMap<String, String> = Default::default();
     let mut promoted: std::collections::BTreeSet<String> = Default::default();
+    let mut promoted_strategies: std::collections::BTreeSet<(String, u32)> = Default::default();
     let mut commits = Vec::new();
     let (mut expected_cycle, mut alpha, mut omnibus) = (1usize, 0.0f64, 0usize);
     for e in &entries {
@@ -385,6 +438,54 @@ pub fn verify(cfg: &ResearchConfig) -> Result<VerifyReport, ResearchError> {
             }
             Entry::Holdout { git_commit, .. } => commits.push(git_commit.clone()),
             Entry::Diagnostic { git_commit, .. } => commits.push(git_commit.clone()),
+            Entry::Strategy {
+                cycle,
+                card_id,
+                sha256,
+                git_commit,
+                width,
+                verdict,
+                ..
+            } => {
+                commits.push(git_commit.clone());
+                if *cycle != expected_cycle {
+                    problems.push(format!(
+                        "strategy cycle {cycle} of {card_id} breaks the sequence (expected {expected_cycle})"
+                    ));
+                }
+                expected_cycle = cycle + 1;
+                match registered.get(card_id) {
+                    None => problems.push(format!("{card_id} ran without being registered first")),
+                    Some(h) if h != sha256 => problems.push(format!(
+                        "{card_id} ran with a hash that differs from its registration"
+                    )),
+                    Some(_) => {}
+                }
+                if *verdict == Verdict::Promote {
+                    promoted_strategies.insert((card_id.clone(), *width));
+                }
+            }
+            Entry::StrategyConfirm {
+                cycle,
+                card_id,
+                git_commit,
+                width,
+                ..
+            } => {
+                commits.push(git_commit.clone());
+                if *cycle != expected_cycle {
+                    problems.push(format!(
+                        "strategy confirmation cycle {cycle} breaks the sequence (expected {expected_cycle})"
+                    ));
+                }
+                expected_cycle = cycle + 1;
+                if !promoted_strategies.contains(&(card_id.clone(), *width)) {
+                    problems.push(format!(
+                        "{card_id} on {width}m was confirmed without a PROMOTE verdict"
+                    ));
+                }
+            }
+            Entry::StrategyHoldout { git_commit, .. } => commits.push(git_commit.clone()),
         }
     }
     let cards_run = ledger.cards_run()?;
@@ -409,9 +510,9 @@ pub fn verify(cfg: &ResearchConfig) -> Result<VerifyReport, ResearchError> {
     // registered cards must still match the committed files
     for (id, hash) in &registered {
         let path = Path::new(&cfg.cards_dir).join(format!("{id}.toml"));
-        match load_card(&path) {
-            Ok((_, current)) if &current == hash => {}
-            Ok((_, current)) => problems.push(format!(
+        match crate::strategy::card_file_hash(&path) {
+            Ok(current) if &current == hash => {}
+            Ok(current) => problems.push(format!(
                 "card {id} changed after registration ({hash} then {current})"
             )),
             Err(e) => problems.push(format!("card {id} cannot be read: {e}")),
@@ -713,6 +814,9 @@ pub fn execute_confirm(
 pub struct Freeze {
     pub card_id: String,
     pub note: String,
+    /// The timeframe of a strategy card; hypothesis cards leave it out.
+    #[serde(default)]
+    pub width: Option<u32>,
 }
 
 /// The single run on the holdout segment. It needs a freeze file, a confirmed card and an unused
@@ -744,7 +848,10 @@ pub fn execute_holdout(
             freeze.card_id
         )));
     }
-    if entries.iter().any(|e| matches!(e, Entry::Holdout { .. })) {
+    if entries
+        .iter()
+        .any(|e| matches!(e, Entry::Holdout { .. } | Entry::StrategyHoldout { .. }))
+    {
         return Err(ResearchError::HoldoutLocked(
             "the holdout was already run".into(),
         ));
