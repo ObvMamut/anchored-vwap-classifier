@@ -39,6 +39,11 @@ enum Command {
         #[command(subcommand)]
         stage: BaselinesStage,
     },
+    /// Export the joined event, label and feature tables.
+    Features {
+        #[command(subcommand)]
+        stage: FeaturesStage,
+    },
     /// Render the random day charts for the visual check.
     Spotcheck { config: PathBuf },
     /// The closed research loop.
@@ -82,6 +87,12 @@ enum EventsStage {
 #[derive(Subcommand)]
 enum LabelsStage {
     /// Build labeled events for every timeframe.
+    Build { config: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum FeaturesStage {
+    /// Write features_<w>m.parquet for every timeframe.
     Build { config: PathBuf },
 }
 
@@ -133,6 +144,9 @@ fn run() -> Result<()> {
         Command::Labels {
             stage: LabelsStage::Build { config },
         } => stages::labels_build(&config)?,
+        Command::Features {
+            stage: FeaturesStage::Build { config },
+        } => stages::features_build(&config)?,
         Command::Baselines {
             stage: BaselinesStage::Run { config },
         } => stages::baselines_run(&config)?,

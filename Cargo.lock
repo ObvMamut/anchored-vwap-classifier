@@ -4145,7 +4145,9 @@ dependencies = [
  "vwap_baselines",
  "vwap_core",
  "vwap_data",
+ "vwap_dataset",
  "vwap_events",
+ "vwap_features",
  "vwap_labels",
  "vwap_report",
  "vwap_research",
@@ -4178,6 +4180,20 @@ dependencies = [
  "thiserror",
  "toml",
  "vwap_core",
+]
+
+[[package]]
+name = "vwap_dataset"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "polars",
+ "thiserror",
+ "vwap_core",
+ "vwap_data",
+ "vwap_events",
+ "vwap_features",
+ "vwap_labels",
 ]
 
 [[package]]
@@ -4258,6 +4274,7 @@ dependencies = [
  "vwap_baselines",
  "vwap_core",
  "vwap_data",
+ "vwap_dataset",
  "vwap_events",
  "vwap_features",
  "vwap_labels",

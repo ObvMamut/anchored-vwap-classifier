@@ -50,6 +50,7 @@ pub fn synthetic_samples(
                     outcome_ticks: 0.0,
                     sigma_over_price: rng.random::<f64>() * 0.01,
                     features,
+                    ..Sample::default()
                 });
             }
         }
@@ -156,6 +157,7 @@ mod tests {
                             outcome_ticks: 0.0,
                             sigma_over_price: 0.005,
                             features,
+                            ..Sample::default()
                         });
                     }
                 }

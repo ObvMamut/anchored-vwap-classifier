@@ -377,6 +377,8 @@ pub struct FeaturesConfig {
     pub time_block_edges: [u32; 4],
     /// Scale of the volatility ratio feature.
     pub vol_ratio_scale: f64,
+    /// Where `vwap features build` writes the exported feature tables.
+    pub output_dir: String,
 }
 
 impl Default for FeaturesConfig {
@@ -392,6 +394,7 @@ impl Default for FeaturesConfig {
             globex_open_minute: 1080,
             time_block_edges: [570, 630, 840, 1020],
             vol_ratio_scale: 10_000.0,
+            output_dir: "artifacts/features".into(),
         }
     }
 }

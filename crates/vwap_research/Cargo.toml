@@ -13,6 +13,7 @@ vwap_labels = { path = "../vwap_labels" }
 vwap_features = { path = "../vwap_features" }
 vwap_baselines = { path = "../vwap_baselines" }
 vwap_validation = { path = "../vwap_validation" }
+vwap_dataset = { path = "../vwap_dataset" }
 chrono.workspace = true
 lightgbm3 = "1.0.11"
 rayon.workspace = true

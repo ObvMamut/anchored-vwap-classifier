@@ -354,6 +354,7 @@ mod tests {
                     outcome_ticks: 0.0,
                     sigma_over_price: 0.005,
                     features,
+                    ..Sample::default()
                 }
             })
             .collect()

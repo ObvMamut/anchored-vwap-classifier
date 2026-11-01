@@ -217,11 +217,12 @@ type Stage = (&'static str, fn(&Path) -> Result<String>);
 /// Runs the deterministic stages in order and stops at the first error. The omnibus and the card
 /// runs are left out on purpose, because they spend alpha.
 pub fn pipeline(config: &Path) -> Result<String> {
-    let stages: [Stage; 7] = [
+    let stages: [Stage; 8] = [
         ("doctor", doctor),
         ("data clean", crate::stages::data_clean),
         ("events detect", crate::stages::events_detect),
         ("labels build", crate::stages::labels_build),
+        ("features build", crate::stages::features_build),
         ("baselines run", crate::stages::baselines_run),
         ("spotcheck", crate::stages::spotcheck),
         ("research verify", crate::research::verify),

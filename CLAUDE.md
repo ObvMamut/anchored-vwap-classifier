@@ -39,6 +39,8 @@ crates/   vwap_core        typed config, small enums, constants, errors, manifes
           vwap_events      anchored VWAP, ATR, bar sampling, touch detection
           vwap_labels      triple barrier labels, MAE, time to barrier
           vwap_features    18 features, CausalView, level table
+          vwap_validation  purged walk forward, DSR, PBO, normal and chi square maths
+          vwap_dataset     the joined sample table, parquet export of features
           vwap_baselines   control levels, bootstrap, gate 3a
           vwap_research    the research protocol: views, cards, ledger, omnibus
           vwap_report      plotters spot check charts
@@ -52,7 +54,7 @@ data.parquet  raw input, stays at the repository root
 data/ artifacts/ reports/ target/   generated, ignored by git
 ```
 
-Crate and directory names use underscores. Specified but not built: `vwap_validation`, `vwap_model`, `vwap_backtest` (see the banners in `docs/MODELING.md`, `docs/BACKTEST.md`, `docs/VALIDATION.md`).
+Crate and directory names use underscores. Specified but not built: `vwap_model`, `vwap_backtest` (see the banners in `docs/MODELING.md`, `docs/BACKTEST.md`, `docs/VALIDATION.md`).
 
 ## Commands
 
@@ -84,10 +86,11 @@ The binary is `target/release/vwap`. Every stage takes the config directory as i
 
 ```bash
 vwap doctor config
-vwap pipeline config            # doctor, data clean, events detect, labels build, baselines run, spotcheck, research verify
+vwap pipeline config            # doctor, data clean, events detect, labels build, features build, baselines run, spotcheck, research verify
 vwap data clean config
 vwap events detect config
 vwap labels build config
+vwap features build config      # artifacts/features/features_<w>m.parquet
 vwap baselines run config
 vwap spotcheck config
 vwap research status config

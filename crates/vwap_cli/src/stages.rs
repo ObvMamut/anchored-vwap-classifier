@@ -204,3 +204,35 @@ pub fn spotcheck(config: &Path) -> Result<String> {
     }
     Ok(serde_json::to_string_pretty(&all)?)
 }
+
+pub fn features_build(config: &Path) -> Result<String> {
+    let data = vwap_core::load_data_config(config)?;
+    let ev = vwap_core::load_events_config(config)?;
+    let lab = vwap_core::load_labels_config(config)?;
+    let feat = vwap_core::load_features_config(config)?;
+    let clean = load_clean(&data)?;
+    let samples = vwap_dataset::assemble(&data, &ev, &lab, &feat, &clean.bars);
+    let rows = vwap_dataset::write_features(&samples, &ev.timeframes, Path::new(&feat.output_dir))?;
+    let counts: Vec<(String, u64)> = rows
+        .iter()
+        .map(|(w, n)| (format!("features_{w}m"), *n as u64))
+        .collect();
+    let counts_ref: Vec<(&str, u64)> = counts.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+    write_manifest(
+        config,
+        &feat.output_dir,
+        "features_build",
+        &["data.toml", "events.toml", "labels.toml", "features.toml"],
+        Some(&clean.fingerprint),
+        &counts_ref,
+    )?;
+    let mut out = String::new();
+    for (w, n) in &rows {
+        out.push_str(&format!(
+            "{w}m: {n} events, {} feature columns -> {}/features_{w}m.parquet\n",
+            vwap_features::feature_names().len(),
+            feat.output_dir
+        ));
+    }
+    Ok(out)
+}

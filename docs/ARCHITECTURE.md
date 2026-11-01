@@ -13,13 +13,14 @@ Dependency direction runs from the bottom of the list upward. A crate depends on
 3. `vwap_events`: anchored VWAP, ATR, 5 and 15 minute bar sampling, touch detection and the re arm state machine (`detect_level` works on any level series, which is how controls reuse it). Exposes the `LevelSource` trait.
 4. `vwap_labels`: triple barrier labels, ambiguity resolution on 1 minute bars, time to barrier, MAE, parquet output.
 5. `vwap_features`: 18 features behind the `CausalView`, which cannot read any bar after the touch, plus the prior day and overnight level table.
+5b. `vwap_dataset`: the joined sample table (event, label, features, barrier prices) and the parquet export written by `vwap features build`.
 6. `vwap_baselines`: control `LevelSource` implementations (random horizontal levels, shifted anchor VWAP, previous session VWAP), class frequencies, the paired session bootstrap, the Wald test, Holm, and the gate 3a equivalence verdicts.
 7. `vwap_research`: the closed research loop of `PROTOCOL.md`: split views with permits, hypothesis cards, the append only ledger with budget enforcement, the subset contrast runner and verdict rules, the omnibus screen, confirmation, the holdout run, `verify` and `replay`.
 8. `vwap_report`: plotters charts (the candlestick spot check). Depends on `vwap_events`.
 9. `vwap_cli`: the `vwap` binary, split into `ctx` (git, the clean data check, manifests), `stages`, `research` and `ops` (doctor, pipeline). It holds the only `anyhow` usage.
 10. `vwap_testkit`: synthetic sessions and test configurations shared by the test suites. Used only as a dev dependency.
 
-Specified but not built: `vwap_validation` (purged walk forward, DSR, PBO), `vwap_model` (models, calibration), `vwap_backtest` (costs, trades).
+Specified but not built: `vwap_model` (models, calibration), `vwap_backtest` (costs, trades).
 
 ## 2. Data flow from raw data to final report
 
@@ -31,7 +32,7 @@ data.parquet (raw 1 minute bars, broker server time, tick volume)
   => vwap_baselines  control events and labels, class frequencies, GATE report
   => vwap_features feature matrix aligned to labeled events
   => vwap_research (built) split views, ledger, cards, omnibus, confirm, holdout
-  => vwap_validation  (specified, not built) purged walk forward splits, DSR, PBO
+  => vwap_validation  (built, library only) purged walk forward splits, DSR, PBO
   => vwap_model    (specified, not built) per fold: fit, calibrate, tune tau, predict
   => vwap_backtest (specified, not built) trades, equity, cost sweep
   => vwap_report   charts and report.  Holdout path runs once at the end.
