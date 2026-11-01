@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # allows a manual run on any branch from the Actions tab
+  workflow_dispatch:
   schedule:
     # nightly run with many more property test cases
     - cron: "17 3 * * *"
