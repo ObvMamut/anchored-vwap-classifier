@@ -23,6 +23,7 @@ flowchart LR
 | Omnibus screen | Structure found, but only the clock driven chop rate | section 13 |
 | Gate 3b: 7 hypothesis cards | None promoted (5 dropped, 2 refine) | section 14 |
 | Strategies S001 to S003, 2 timeframes | Every fold abstained, 0 trades | section 16 |
+| Win rate search: 4 new cards, 12 direction model runs, 96 barrier shapes | Win rates from 25% to 74% by shape, none above break even, 0 trades at 4 per week | section 17 |
 
 ```mermaid
 xychart-beta
@@ -43,7 +44,7 @@ xychart-beta
   <img src="docs/img/benchmark_winrate.png" width="90%" alt="Win rate of taking every touch against the break even win rate, per fold">
 </p>
 
-A coin flip before costs, and 4 to 5 points short of break even after them, in every fold.
+A coin flip before costs, and 4 to 5 points short of break even after them, in every fold. Win rates can be pushed from 25% to 74% by moving the target and stop, but every one of the 96 shapes loses money, because break even moves with the win rate. Models trained on direction alone (chop removed) have no skill, and none of four further hypotheses survived.
 
 The 15 minute models do know something, but it is range and clock structure (chop), not direction. No threshold on the rejection probability beats the 2.8 tick round trip cost. 14 counted trials, alpha spent 0.0333 of 0.05.
 

@@ -89,6 +89,7 @@ Strategy cards (`docs/PROTOCOL.md`, section 12) are run like hypothesis cards:
 ./target/release/vwap research strategy S004 config
 ./target/release/vwap research dsr config
 ./target/release/vwap research benchmark config   # win rate of taking every touch, descriptive
+./target/release/vwap research benchmark config --grid   # the whole label grid, counted as 96 trials once
 ./target/release/vwap report build config
 ```
 
