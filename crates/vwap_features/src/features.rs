@@ -26,7 +26,7 @@ impl FeatureTable {
     }
 }
 
-const NAMES: [&str; 27] = [
+const NAMES: [&str; 34] = [
     "vslope_align",
     "dist_travelled",
     "bars_on_side",
@@ -54,7 +54,19 @@ const NAMES: [&str; 27] = [
     "cal_nfp_day",
     "cal_nfp_until",
     "cal_nfp_since",
+    "close_location",
+    "bar_range",
+    "tod_sin",
+    "tod_cos",
+    "weekday",
+    "dist_onl",
+    "band_pos_max",
 ];
+
+/// Columns computed by `feature_row`: the 18 original ones, then the 7 appended after the
+/// calendar columns.
+const ROW_ORIGINAL: usize = 18;
+const ROW_APPENDED: usize = 7;
 
 pub fn feature_names() -> &'static [&'static str] {
     &NAMES
@@ -85,7 +97,7 @@ fn feature_row(
     levels: &LevelTable,
     sessions: &SessionIndex,
     cfg: &FeaturesConfig,
-) -> [f64; 18] {
+) -> [f64; ROW_ORIGINAL + ROW_APPENDED] {
     let nan = f64::NAN;
     let t = v.t();
     let s = f64::from(e.side);
@@ -189,6 +201,25 @@ fn feature_row(
         3.0
     };
 
+    // appended features: the touch bar's shape, the clock as a circle, the weekday, the distance
+    // to the overnight low and the band position of the approach extreme
+    let range = v.high(t).zip(v.low(t)).map_or(nan, |(h, l)| h - l);
+    let close_location = match (v.close(t), v.low(t)) {
+        (Some(c), Some(l)) if range > 0.0 => (c - l) / range,
+        _ => nan,
+    };
+    let bar_range = range / sigma;
+    let angle = 2.0 * std::f64::consts::PI * f64::from(close_minute) / 1440.0;
+    let weekday = f64::from((e.trading_date + 3).rem_euclid(7));
+    let band_pos_max = (1..=n_run)
+        .filter_map(|k| {
+            let j = t - k;
+            let sd = v.vwap_sd(j)?;
+            let d = signed_dist(v, s, j)?;
+            (sd.is_finite() && sd > 0.0).then_some(d / sd)
+        })
+        .fold(f64::NAN, f64::max);
+
     [
         vslope_align,
         dist_travelled,
@@ -208,6 +239,13 @@ fn feature_row(
         donh,
         time_block,
         conf_count,
+        close_location,
+        bar_range,
+        angle.sin(),
+        angle.cos(),
+        weekday,
+        donl,
+        band_pos_max,
     ]
 }
 
@@ -225,7 +263,9 @@ pub fn build_features(
         let v = CausalView::new(bars, e.bar);
         let row = feature_row(e, &v, levels, sessions, cfg);
         let cal = calendar.features(e.close_us, e.session);
-        for (c, x) in cols.iter_mut().zip(row.into_iter().chain(cal)) {
+        let (head, tail) = row.split_at(ROW_ORIGINAL);
+        let all = head.iter().chain(cal.iter()).chain(tail.iter()).copied();
+        for (c, x) in cols.iter_mut().zip(all) {
             c.push(x);
         }
     }

@@ -185,9 +185,9 @@ fn golden_calendar_fingerprint() {
             &cal,
             &vwap_core::FeaturesConfig::default(),
         );
-        assert_eq!(f.cols.len(), 27);
+        assert_eq!(f.cols.len(), 34);
         bytes.extend((events.len() as u64).to_le_bytes());
-        for col in f.cols.iter().skip(18) {
+        for col in f.cols.iter().skip(18).take(9) {
             for x in col {
                 bytes.extend(x.to_bits().to_le_bytes());
             }
@@ -198,4 +198,76 @@ fn golden_calendar_fingerprint() {
         hash, "f9138f856fc7c793d96edcab131acf182d5fcdd5f168f6b1cf86f84b3cd2456e",
         "calendar fingerprint"
     );
+}
+
+/// The seven columns appended after the calendar columns (touch bar shape, time of day as a
+/// circle, weekday, distance to the overnight low, band position of the approach extreme).
+#[test]
+fn golden_appended_fingerprint() {
+    let steps: Vec<i32> = (0..DAYS * PER_DAY)
+        .map(|i| ((i * 7919) % 41) as i32 - 20)
+        .collect();
+    let weights: Vec<u8> = (0..DAYS * PER_DAY).map(|i| (i % 50) as u8).collect();
+    let bars = series(&steps, &weights);
+    let cfg = data_cfg();
+    let ev = events_cfg();
+    let params = event_params(&cfg, &ev);
+    let mut bytes: Vec<u8> = Vec::new();
+    for width in [5u32, 15] {
+        let c = build(&bars, &cfg, width, ev.atr_length);
+        let (events, _) = detect(&c, &params);
+        let f = build_features(
+            &events,
+            &c,
+            &LevelTable::build(&bars, &vwap_core::FeaturesConfig::default()),
+            &SessionIndex::build(&c),
+            &CalendarTable::disabled(),
+            &vwap_core::FeaturesConfig::default(),
+        );
+        bytes.extend((events.len() as u64).to_le_bytes());
+        for col in f.cols.iter().skip(27) {
+            for x in col {
+                bytes.extend(x.to_bits().to_le_bytes());
+            }
+        }
+    }
+    let hash = vwap_core::manifest::sha256_bytes(&bytes);
+    assert_eq!(hash, "ca55e86028a132861e896f00963bbc41978db19906a94ff7cad4a6d3b9bfdc73", "appended fingerprint");
+}
+
+#[test]
+fn the_appended_features_have_the_documented_ranges() {
+    let steps: Vec<i32> = (0..DAYS * PER_DAY)
+        .map(|i| ((i * 7919) % 41) as i32 - 20)
+        .collect();
+    let weights: Vec<u8> = (0..DAYS * PER_DAY).map(|i| (i % 50) as u8).collect();
+    let bars = series(&steps, &weights);
+    let cfg = data_cfg();
+    let ev = events_cfg();
+    let c = build(&bars, &cfg, 15, ev.atr_length);
+    let (events, _) = detect(&c, &event_params(&cfg, &ev));
+    let f = build_features(
+        &events,
+        &c,
+        &LevelTable::build(&bars, &vwap_core::FeaturesConfig::default()),
+        &SessionIndex::build(&c),
+        &CalendarTable::disabled(),
+        &vwap_core::FeaturesConfig::default(),
+    );
+    let col = |n: &str| f.col(n).unwrap();
+    assert!(
+        col("close_location")
+            .iter()
+            .all(|x| x.is_nan() || (0.0..=1.0).contains(x))
+    );
+    assert!(col("bar_range").iter().all(|x| x.is_nan() || *x >= 0.0));
+    for (s, c) in col("tod_sin").iter().zip(col("tod_cos")) {
+        assert!((s * s + c * c - 1.0).abs() < 1e-12);
+    }
+    assert!(
+        col("weekday")
+            .iter()
+            .all(|x| (0.0..7.0).contains(x) && x.fract() == 0.0)
+    );
+    assert!(col("band_pos_max").iter().all(|x| x.is_nan() || *x > 0.0));
 }
