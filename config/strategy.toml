@@ -1,0 +1,73 @@
+# Models, calibration and the threshold rule of the strategy stages (`docs/MODELING.md`).
+seed = 20250101
+isotonic_min_events = 1000
+clip_eps = 1e-6
+ece_bins = 10
+winsor_lower = 0.01
+winsor_upper = 0.99
+logistic_l2_grid = [0.1, 1.0, 10.0]
+logistic_max_iterations = 100
+lgbm_max_rounds = 300
+min_train_events = 300
+tau_min = 0.35
+tau_max = 0.80
+tau_step = 0.01
+min_trades_tau = 100
+tau_lcb_quantile = 0.2
+tau_bootstrap_draws = 500
+
+[[lgbm_grid]]
+num_leaves = 4
+learning_rate = 0.05
+min_data_in_leaf = 40
+lambda_l2 = 5.0
+feature_fraction = 0.8
+
+[[lgbm_grid]]
+num_leaves = 4
+learning_rate = 0.05
+min_data_in_leaf = 80
+lambda_l2 = 20.0
+feature_fraction = 0.6
+
+[[lgbm_grid]]
+num_leaves = 7
+learning_rate = 0.05
+min_data_in_leaf = 40
+lambda_l2 = 5.0
+feature_fraction = 0.8
+
+[[lgbm_grid]]
+num_leaves = 7
+learning_rate = 0.05
+min_data_in_leaf = 80
+lambda_l2 = 20.0
+feature_fraction = 0.6
+
+[[lgbm_grid]]
+num_leaves = 4
+learning_rate = 0.1
+min_data_in_leaf = 40
+lambda_l2 = 5.0
+feature_fraction = 0.8
+
+[[lgbm_grid]]
+num_leaves = 4
+learning_rate = 0.1
+min_data_in_leaf = 80
+lambda_l2 = 20.0
+feature_fraction = 0.6
+
+[[lgbm_grid]]
+num_leaves = 7
+learning_rate = 0.1
+min_data_in_leaf = 40
+lambda_l2 = 5.0
+feature_fraction = 0.8
+
+[[lgbm_grid]]
+num_leaves = 7
+learning_rate = 0.1
+min_data_in_leaf = 80
+lambda_l2 = 20.0
+feature_fraction = 0.6

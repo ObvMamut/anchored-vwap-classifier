@@ -6,12 +6,14 @@
     allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)
 )]
 
+pub mod bootstrap;
 pub mod dsr;
 pub mod math;
 pub mod pbo;
 pub mod splits;
 pub mod stats;
 
+pub use bootstrap::{cluster_draws, interval, percentile};
 pub use dsr::{dsr, expected_max_sharpe, probabilistic_sharpe};
 pub use pbo::{PboResult, pbo};
 pub use splits::{

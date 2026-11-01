@@ -9,10 +9,11 @@ publish.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
 
-[dev-dependencies]
-proptest.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
 
 [lints]
 workspace = true

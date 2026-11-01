@@ -8,6 +8,7 @@ pub mod config;
 pub mod consts;
 pub mod error;
 pub mod manifest;
+pub mod strategy_config;
 pub mod types;
 
 pub use config::{
@@ -18,4 +19,8 @@ pub use config::{
 };
 pub use consts::{POINT_VALUE_USD, TICK_SIZE, TICK_VALUE_USD};
 pub use error::CoreError;
+pub use strategy_config::{
+    LgbmPoint, StrategyConfig, ValidationConfig, WalkMode, load_strategy_config,
+    load_validation_config,
+};
 pub use types::{Class, Side, Timeframe};

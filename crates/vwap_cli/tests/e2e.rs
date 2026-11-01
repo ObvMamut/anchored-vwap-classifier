@@ -169,7 +169,12 @@ fn sandbox(name: &str) -> Sandbox {
             ("report_dir", q("research/reports")),
         ],
     );
-    for f in ["features.toml", "model.toml"] {
+    for f in [
+        "features.toml",
+        "model.toml",
+        "validation.toml",
+        "strategy.toml",
+    ] {
         fs::copy(repo_cfg.join(f), dir.join("config").join(f)).unwrap();
     }
     Sandbox {

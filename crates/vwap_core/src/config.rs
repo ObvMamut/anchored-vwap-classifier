@@ -175,7 +175,10 @@ impl EventsConfig {
     }
 }
 
-fn read_toml<T: serde::de::DeserializeOwned>(dir: &Path, name: &str) -> Result<T, CoreError> {
+pub(crate) fn read_toml<T: serde::de::DeserializeOwned>(
+    dir: &Path,
+    name: &str,
+) -> Result<T, CoreError> {
     let path = dir.join(name);
     let text = std::fs::read_to_string(&path).map_err(|source| CoreError::ConfigIo {
         path: path.display().to_string(),
