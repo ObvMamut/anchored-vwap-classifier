@@ -4261,6 +4261,7 @@ dependencies = [
  "vwap_events",
  "vwap_features",
  "vwap_labels",
+ "vwap_validation",
 ]
 
 [[package]]
@@ -4271,6 +4272,17 @@ dependencies = [
  "toml",
  "vwap_core",
  "vwap_data",
+]
+
+[[package]]
+name = "vwap_validation"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "proptest",
+ "rand 0.9.5",
+ "rand_chacha 0.9.0",
+ "thiserror",
 ]
 
 [[package]]

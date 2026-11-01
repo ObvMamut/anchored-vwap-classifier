@@ -116,6 +116,13 @@ fn gammq(a: f64, x: f64) -> f64 {
     }
 }
 
+/// Standard normal cumulative distribution function, accurate to about 1e-15 (through the
+/// regularised incomplete gamma function: erfc(z) equals Q(1/2, z squared)).
+pub fn norm_cdf(x: f64) -> f64 {
+    let tail = 0.5 * gammq(0.5, x * x / 2.0);
+    if x >= 0.0 { 1.0 - tail } else { tail }
+}
+
 /// Survival function of the chi square distribution with `df` degrees of freedom.
 pub fn chi2_sf(x: f64, df: usize) -> f64 {
     gammq(df as f64 / 2.0, x / 2.0).clamp(0.0, 1.0)
@@ -174,6 +181,16 @@ mod tests {
         assert!((norm_ppf(0.8) - 0.841_621_234).abs() < 1e-7);
         assert!((norm_ppf(0.001) + 3.090_232_306).abs() < 1e-6);
         assert!((norm_ppf(0.01) + 2.326_347_874).abs() < 1e-6);
+    }
+
+    #[test]
+    fn normal_cdf_matches_known_values_and_inverts_the_quantile() {
+        assert!((norm_cdf(0.0) - 0.5).abs() < 1e-14);
+        assert!((norm_cdf(1.959_963_984_540_054) - 0.975).abs() < 1e-12);
+        assert!((norm_cdf(-1.0) - 0.158_655_253_931_457).abs() < 1e-12);
+        for p in [0.001, 0.05, 0.3, 0.5, 0.8, 0.99, 0.999] {
+            assert!((norm_cdf(norm_ppf(p)) - p).abs() < 1e-8, "p = {p}");
+        }
     }
 
     #[test]
