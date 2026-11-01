@@ -178,7 +178,12 @@ pub fn spotcheck(config: &Path) -> Result<String> {
         let sessions = match &chosen {
             Some(s) => s.clone(),
             None => {
-                let eligible = vwap_report::spotcheck::eligible_sessions(&coarse, start, end);
+                let eligible = vwap_report::spotcheck::eligible_sessions(
+                    &coarse,
+                    start,
+                    end,
+                    ev.spotcheck_min_session_minutes,
+                );
                 let s = vwap_report::spotcheck::pick_sessions(
                     &eligible,
                     ev.spotcheck_days,
@@ -193,7 +198,7 @@ pub fn spotcheck(config: &Path) -> Result<String> {
             &events,
             &sessions,
             ev.exclude_minutes,
-            &ev.font_path,
+            &ev.font_paths,
             Path::new(&ev.spotcheck_dir),
         )?);
     }

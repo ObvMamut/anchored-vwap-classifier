@@ -76,7 +76,7 @@ pub fn execute(
     ledger.check_budget(cfg, &card.id, alpha)?;
     let first_run = !ledger.cards_run()?.contains(&card.id);
     let view = DiscoveryView::select(samples, &Bounds::from_config(cfg));
-    if view.samples().len() < 500 {
+    if view.samples().len() < cfg.min_discovery_samples {
         return Err(ResearchError::NotEnoughData(format!(
             "only {} discovery samples",
             view.samples().len()
@@ -115,6 +115,7 @@ pub fn execute(
 /// Cycle 0: the omnibus screen on the discovery view. Allowed once.
 pub fn execute_omnibus(
     cfg: &ResearchConfig,
+    model: &vwap_core::ModelConfig,
     git_commit: &str,
     fingerprint: &str,
     samples: &[Sample],
@@ -132,7 +133,7 @@ pub fn execute_omnibus(
         ));
     }
     let view = DiscoveryView::select(samples, &Bounds::from_config(cfg));
-    let r = crate::omnibus::omnibus(view.samples(), cfg, horizon_bars)?;
+    let r = crate::omnibus::omnibus(view.samples(), cfg, model, horizon_bars)?;
     let dir = Path::new(&cfg.report_dir);
     fs::create_dir_all(dir).map_err(|source| ResearchError::Io {
         path: dir.display().to_string(),
@@ -160,6 +161,7 @@ pub fn execute_omnibus(
 /// Descriptive decomposition of the omnibus. Logged as a diagnostic, spends no alpha.
 pub fn execute_diagnostic(
     cfg: &ResearchConfig,
+    model: &vwap_core::ModelConfig,
     git_commit: &str,
     samples: &[Sample],
     horizon_bars: impl Fn(u32) -> usize,
@@ -170,7 +172,7 @@ pub fn execute_diagnostic(
     let view = DiscoveryView::select(samples, &Bounds::from_config(cfg));
     let mut out = Vec::new();
     for &t in tasks {
-        let d = crate::omnibus::decompose(view.samples(), cfg, &horizon_bars, t, perms)?;
+        let d = crate::omnibus::decompose(view.samples(), cfg, model, &horizon_bars, t, perms)?;
         let note = d
             .widths
             .iter()

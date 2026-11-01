@@ -260,6 +260,11 @@ cost_ticks = 3.0
 bootstrap_draws = 100
 omnibus_permutations = 10
 seed = 1
+min_discovery_samples = 500
+selftest_planted_effect = 0.08
+selftest_null_trials = 60
+selftest_max_null_promotes = 1
+selftest_max_null_raw_rejects = 10
 "#,
         )
         .unwrap()

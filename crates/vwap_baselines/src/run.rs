@@ -19,8 +19,6 @@ use crate::stats::{
     Estimates, NCLASS, Row, SessionTables, bootstrap, holm, simultaneous_ci, total_variation, wald,
 };
 
-const N_STRATA: usize = 24 * 3;
-
 #[derive(Debug, Clone, Serialize)]
 pub struct GroupDesc {
     pub name: String,
@@ -156,17 +154,19 @@ fn stratum_edges(l: &[Labeled]) -> [f64; 2] {
     [v[v.len() / 3], v[2 * v.len() / 3]]
 }
 
-fn rows(l: &[Labeled], coarse: &CoarseBars, edges: &[f64; 2]) -> Vec<Row> {
+/// Events reduced to (session, stratum, class). Strata are time of day slots of `stratum_minutes`
+/// crossed with terciles of the volatility ratio.
+fn rows(l: &[Labeled], coarse: &CoarseBars, edges: &[f64; 2], stratum_minutes: usize) -> Vec<Row> {
     l.iter()
         .filter_map(|x| {
             let class = x.class?.index();
-            let hour =
-                (usize::from(coarse.minute[x.event.bar]) + coarse.width as usize) % 1440 / 60;
+            let slot = (usize::from(coarse.minute[x.event.bar]) + coarse.width as usize) % 1440
+                / stratum_minutes;
             let r = x.sigma / x.event.close;
             let tercile = usize::from(r > edges[0]) + usize::from(r > edges[1]);
             Some(Row {
                 session: x.event.session,
-                stratum: hour * 3 + tercile,
+                stratum: slot * 3 + tercile,
                 class,
             })
         })
@@ -189,8 +189,10 @@ fn family_result(
     edges: &[f64; 2],
     base: &BaselinesConfig,
 ) -> FamilyResult {
-    let ctrl_rows = rows(ctrl, coarse, edges);
-    let tables = SessionTables::build(N_STRATA, vwap_rows, &ctrl_rows);
+    let stratum_minutes = base.stratum_minutes as usize;
+    let ctrl_rows = rows(ctrl, coarse, edges, stratum_minutes);
+    let n_strata = (1440 / stratum_minutes) * 3;
+    let tables = SessionTables::build(n_strata, vwap_rows, &ctrl_rows);
     let seed = base.seed ^ hash_name(family) ^ u64::from(width);
     let min_n = u32::try_from(base.min_stratum_events).unwrap_or(30);
     let (point, draws) = bootstrap(&tables, base.bootstrap_draws, seed, min_n);
@@ -263,7 +265,7 @@ pub fn run_baselines(
             )));
         }
         let edges = stratum_edges(&vwap_all);
-        let vwap_rows = rows(&vwap_all, &coarse, &edges);
+        let vwap_rows = rows(&vwap_all, &coarse, &edges, base.stratum_minutes as usize);
 
         let pool = |sources: Vec<Box<dyn LevelSource>>| -> Vec<Labeled> {
             sources

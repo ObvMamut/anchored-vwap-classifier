@@ -31,6 +31,7 @@ min_bars_fraction = 0.9
 early_close_time = "13:15"
 flat_time_globex = "16:55"
 flat_time_rth = "16:00"
+expected_session_bars = 1380.0
 "#
     );
     toml::from_str(&text).unwrap()

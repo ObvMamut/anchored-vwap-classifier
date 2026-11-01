@@ -11,7 +11,7 @@ use lightgbm3::{Booster, Dataset};
 use rayon::prelude::*;
 use serde::Serialize;
 use serde_json::json;
-use vwap_core::{Class, ResearchConfig};
+use vwap_core::{Class, ModelConfig, ResearchConfig};
 use vwap_features::feature_names;
 
 use crate::error::ResearchError;
@@ -28,9 +28,6 @@ pub enum Task {
     /// Chop versus a barrier hit.
     Chop,
 }
-
-const BLOCKS: usize = 6;
-const ROUNDS: i64 = 60;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WidthOmnibus {
@@ -89,15 +86,15 @@ fn prepare(samples: &[&Sample], task: Task) -> Data {
     d
 }
 
-fn params(seed: u64, classes: usize) -> serde_json::Value {
+fn params(seed: u64, classes: usize, m: &ModelConfig) -> serde_json::Value {
     let mut p = json!({
         "objective": if classes == 3 { "multiclass" } else { "binary" },
-        "num_iterations": ROUNDS,
-        "learning_rate": 0.05,
-        "num_leaves": 7,
-        "min_data_in_leaf": 40,
-        "feature_fraction": 0.8,
-        "lambda_l2": 5.0,
+        "num_iterations": m.rounds,
+        "learning_rate": m.learning_rate,
+        "num_leaves": m.num_leaves,
+        "min_data_in_leaf": m.min_data_in_leaf,
+        "feature_fraction": m.feature_fraction,
+        "lambda_l2": m.lambda_l2,
         "verbose": -1,
         "num_threads": 1,
         "deterministic": true,
@@ -114,18 +111,32 @@ fn params(seed: u64, classes: usize) -> serde_json::Value {
 }
 
 /// Pooled log loss improvement over the training frequencies, for labels `y`.
-fn statistic(d: &Data, y: &[usize], embargo_us: i64, seed: u64, classes: usize) -> Option<f64> {
+fn statistic(
+    d: &Data,
+    y: &[usize],
+    embargo_us: i64,
+    seed: u64,
+    classes: usize,
+    m: &ModelConfig,
+) -> Option<f64> {
     let n = y.len();
-    let block = n / BLOCKS;
+    let block = n / m.blocks;
     let (mut gain, mut count) = (0.0, 0usize);
-    for k in 1..BLOCKS {
-        let (a, z) = (k * block, if k + 1 == BLOCKS { n } else { (k + 1) * block });
+    for k in 1..m.blocks {
+        let (a, z) = (
+            k * block,
+            if k + 1 == m.blocks {
+                n
+            } else {
+                (k + 1) * block
+            },
+        );
         let test_start = d.t_close[a];
         // purge: training events whose label span plus the embargo reaches the test start
         let train: Vec<usize> = (0..a)
             .filter(|&i| d.t_end[i] + embargo_us < test_start)
             .collect();
-        if train.len() < 300 {
+        if train.len() < m.min_train_rows {
             continue;
         }
         let flat: Vec<f64> = train
@@ -134,7 +145,7 @@ fn statistic(d: &Data, y: &[usize], embargo_us: i64, seed: u64, classes: usize) 
             .collect();
         let labels: Vec<f32> = train.iter().map(|&i| y[i] as f32).collect();
         let ds = Dataset::from_slice(&flat, &labels, d.n_feat as i32, true).ok()?;
-        let booster = Booster::train(ds, &params(seed, classes)).ok()?;
+        let booster = Booster::train(ds, &params(seed, classes, m)).ok()?;
         let test_flat = &d.x[a * d.n_feat..z * d.n_feat];
         let p = booster.predict(test_flat, d.n_feat as i32, true).ok()?;
         let mut freq = [1.0f64; 3];
@@ -164,19 +175,20 @@ fn width_omnibus(
     width: u32,
     horizon_bars: usize,
     cfg: &ResearchConfig,
+    model: &ModelConfig,
     task: Task,
     perms: usize,
 ) -> Result<WidthOmnibus, ResearchError> {
     let d = prepare(samples, task);
     let classes = if task == Task::Multi { 3 } else { 2 };
     let n = d.y.len();
-    if n < 1500 {
+    if n < model.min_rows {
         return Err(ResearchError::NotEnoughData(format!(
             "{n} rows for the omnibus on {width} minute bars"
         )));
     }
     let embargo_us = (horizon_bars as i64) * i64::from(width) * 60_000_000;
-    let obs = statistic(&d, &d.y, embargo_us, cfg.seed, classes)
+    let obs = statistic(&d, &d.y, embargo_us, cfg.seed, classes, model)
         .ok_or_else(|| ResearchError::NotEnoughData("cross validation produced no folds".into()))?;
     let nulls: Vec<f64> = (0..perms)
         .into_par_iter()
@@ -187,7 +199,7 @@ fn width_omnibus(
             let span = (n as u64) * 8 / 10;
             let off = n / 10 + (h >> 11) as usize % span.max(1) as usize;
             let y: Vec<usize> = (0..n).map(|i| d.y[(i + off) % n]).collect();
-            statistic(&d, &y, embargo_us, cfg.seed, classes).unwrap_or(f64::NAN)
+            statistic(&d, &y, embargo_us, cfg.seed, classes, model).unwrap_or(f64::NAN)
         })
         .collect();
     let valid: Vec<f64> = nulls.into_iter().filter(|x| x.is_finite()).collect();
@@ -214,6 +226,7 @@ fn width_omnibus(
 pub fn omnibus(
     samples: &[Sample],
     cfg: &ResearchConfig,
+    model: &ModelConfig,
     horizon_bars: impl Fn(u32) -> usize,
 ) -> Result<OmnibusResult, ResearchError> {
     let mut widths = Vec::new();
@@ -225,6 +238,7 @@ pub fn omnibus(
                 w,
                 horizon_bars(w),
                 cfg,
+                model,
                 Task::Multi,
                 cfg.omnibus_permutations,
             )?);
@@ -261,6 +275,7 @@ pub struct Decomposition {
 pub fn decompose(
     samples: &[Sample],
     cfg: &ResearchConfig,
+    model: &ModelConfig,
     horizon_bars: impl Fn(u32) -> usize,
     task: Task,
     perms: usize,
@@ -272,13 +287,21 @@ pub fn decompose(
         if sub.is_empty() {
             continue;
         }
-        widths.push(width_omnibus(&sub, w, horizon_bars(w), cfg, task, perms)?);
+        widths.push(width_omnibus(
+            &sub,
+            w,
+            horizon_bars(w),
+            cfg,
+            model,
+            task,
+            perms,
+        )?);
         // in sample gain importance, for description only
         let d = prepare(&sub, task);
         let classes = if task == Task::Multi { 3 } else { 2 };
         let labels: Vec<f32> = d.y.iter().map(|&v| v as f32).collect();
         if let Ok(ds) = Dataset::from_slice(&d.x, &labels, d.n_feat as i32, true)
-            && let Ok(b) = Booster::train(ds, &params(cfg.seed, classes))
+            && let Ok(b) = Booster::train(ds, &params(cfg.seed, classes, model))
             && let Ok(g) = b.feature_importance(lightgbm3::ImportanceType::Gain)
         {
             let tot: f64 = g.iter().sum::<f64>().max(1e-12);
@@ -346,11 +369,11 @@ mod tests {
     fn planted_structure_is_detected_and_a_null_is_not() {
         let c = cfg();
         let s = make(true, 1);
-        let r = omnibus(&s, &c, |_| 8).unwrap();
+        let r = omnibus(&s, &c, &ModelConfig::default(), |_| 8).unwrap();
         assert!(r.statistic > 0.02, "statistic {}", r.statistic);
         assert!(r.p <= 2.0 / 31.0 + 1e-9, "p {}", r.p);
         let n = make(false, 2);
-        let r0 = omnibus(&n, &c, |_| 8).unwrap();
+        let r0 = omnibus(&n, &c, &ModelConfig::default(), |_| 8).unwrap();
         assert!(r0.p > 0.05, "null p {}", r0.p);
     }
 
@@ -358,7 +381,7 @@ mod tests {
     fn the_directional_task_finds_planted_direction_structure_and_names_the_feature() {
         let c = cfg();
         let s = make(true, 3);
-        let d = decompose(&s, &c, |_| 8, Task::Direction, 30).unwrap();
+        let d = decompose(&s, &c, &ModelConfig::default(), |_| 8, Task::Direction, 30).unwrap();
         assert!(d.widths[0].statistic > 0.02);
         assert_eq!(d.importance[0].1[0].0, "dist_travelled"); // feature index 1
     }

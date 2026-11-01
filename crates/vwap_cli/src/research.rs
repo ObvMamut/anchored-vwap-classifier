@@ -24,8 +24,9 @@ fn samples(config: &Path) -> Result<(Vec<vwap_research::Sample>, String, vwap_co
     let data = vwap_core::load_data_config(config)?;
     let ev = vwap_core::load_events_config(config)?;
     let lab = vwap_core::load_labels_config(config)?;
+    let feat = vwap_core::load_features_config(config)?;
     let clean = load_clean(&data)?;
-    let s = vwap_research::data::assemble(&data, &ev, &lab, &clean.bars);
+    let s = vwap_research::data::assemble(&data, &ev, &lab, &feat, &clean.bars);
     Ok((s, clean.fingerprint, lab))
 }
 
@@ -55,15 +56,18 @@ pub fn run(id: &str, config: &Path) -> Result<String> {
 pub fn omnibus(config: &Path) -> Result<String> {
     let cfg = vwap_core::load_research_config(config)?;
     guard_ledger(&cfg)?;
+    let model = vwap_core::load_model_config(config)?;
     let (s, fingerprint, lab) = samples(config)?;
-    let r =
-        vwap_research::cycle::execute_omnibus(&cfg, &head(), &fingerprint, &s, |w| lab.horizon(w))?;
+    let r = vwap_research::cycle::execute_omnibus(&cfg, &model, &head(), &fingerprint, &s, |w| {
+        lab.horizon(w)
+    })?;
     Ok(serde_json::to_string_pretty(&r)?)
 }
 
 pub fn diagnose(config: &Path) -> Result<String> {
     let cfg = vwap_core::load_research_config(config)?;
     guard_ledger(&cfg)?;
+    let model = vwap_core::load_model_config(config)?;
     let (s, _, lab) = samples(config)?;
     let tasks = [
         vwap_research::omnibus::Task::Direction,
@@ -71,11 +75,12 @@ pub fn diagnose(config: &Path) -> Result<String> {
     ];
     let r = vwap_research::cycle::execute_diagnostic(
         &cfg,
+        &model,
         &head(),
         &s,
         |w| lab.horizon(w),
         &tasks,
-        500,
+        model.diagnostic_permutations,
     )?;
     Ok(serde_json::to_string_pretty(&r)?)
 }

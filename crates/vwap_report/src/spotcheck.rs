@@ -51,7 +51,12 @@ fn clock(minute: i64) -> String {
 /// Sessions eligible for the visual check: entirely inside `[start_us, end_us)`, which the CLI
 /// sets to the discovery segment so that no chart ever shows confirmation or holdout data, and
 /// with a full day of bars.
-pub fn eligible_sessions(bars: &CoarseBars, start_us: i64, end_us: i64) -> Vec<i32> {
+pub fn eligible_sessions(
+    bars: &CoarseBars,
+    start_us: i64,
+    end_us: i64,
+    min_session_minutes: u32,
+) -> Vec<i32> {
     let width_us = i64::from(bars.width) * 60_000_000;
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
@@ -63,7 +68,10 @@ pub fn eligible_sessions(bars: &CoarseBars, start_us: i64, end_us: i64) -> Vec<i
                 .open_us
                 .get(r.end.saturating_sub(1))
                 .map_or(i64::MAX, |t| t + width_us);
-            if r.len() as u32 * bars.width >= 1000 && first >= start_us && last_end < end_us {
+            if r.len() as u32 * bars.width >= min_session_minutes
+                && first >= start_us
+                && last_end < end_us
+            {
                 out.push(s);
             }
         }
@@ -78,17 +86,27 @@ pub fn spotcheck(
     events: &[Event],
     sessions: &[i32],
     exclude_minutes: u32,
-    font_path: &str,
+    font_paths: &[String],
     dir: &Path,
 ) -> Result<Vec<SpotcheckEntry>, ReportError> {
     fs::create_dir_all(dir).map_err(|source| ReportError::Io {
         path: dir.display().to_string(),
         source,
     })?;
-    if let Ok(bytes) = fs::read(font_path) {
-        let leaked: &'static [u8] = Box::leak(bytes.into_boxed_slice());
-        // Registration fails only for an unusable font file; charts then fall back to no text.
-        let _ = register_font("sans-serif", FontStyle::Normal, leaked);
+    // The first candidate that can be read and registered is used. Without a font the chart text
+    // cannot be drawn, so that is an error and not a silent blank chart.
+    let mut registered = false;
+    for path in font_paths {
+        if let Ok(bytes) = fs::read(path) {
+            let leaked: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+            if register_font("sans-serif", FontStyle::Normal, leaked).is_ok() {
+                registered = true;
+                break;
+            }
+        }
+    }
+    if !registered {
+        return Err(ReportError::NoFont(font_paths.join(", ")));
     }
     let mut out = Vec::new();
     for &s in sessions {

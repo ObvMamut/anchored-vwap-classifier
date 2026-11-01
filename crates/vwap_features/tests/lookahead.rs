@@ -35,6 +35,7 @@ min_bars_fraction = 0.5
 early_close_time = "13:15"
 flat_time_globex = "16:55"
 flat_time_rth = "16:00"
+expected_session_bars = 1380.0
 "#,
     )
     .unwrap()
@@ -52,7 +53,8 @@ output_dir = "x"
 spotcheck_days = 1
 spotcheck_seed = 1
 spotcheck_dir = "x"
-font_path = "x"
+font_paths = ["x"]
+spotcheck_min_session_minutes = 1000
 "#,
     )
     .unwrap()
@@ -128,9 +130,9 @@ proptest! {
             let c = build(bars, &cfg, width, ev.atr_length);
             let (events, _) = detect(&c, &params);
             let keep: Vec<_> = events.into_iter().filter(|e| e.close_us <= cut_us).collect();
-            let lv = LevelTable::build(bars);
+            let lv = LevelTable::build(bars, &vwap_core::FeaturesConfig::default());
             let si = SessionIndex::build(&c);
-            let f = build_features(&keep, &c, &lv, &si);
+            let f = build_features(&keep, &c, &lv, &si, &vwap_core::FeaturesConfig::default());
             (keep, f)
         };
         let (ea, fa) = table(&a);
@@ -159,8 +161,9 @@ fn features_are_defined_for_a_typical_event() {
     let f = build_features(
         &events,
         &c,
-        &LevelTable::build(&bars),
+        &LevelTable::build(&bars, &vwap_core::FeaturesConfig::default()),
         &SessionIndex::build(&c),
+        &vwap_core::FeaturesConfig::default(),
     );
     // late events on later days have prior day levels and relative volume
     let late = events
@@ -177,4 +180,42 @@ fn features_are_defined_for_a_typical_event() {
             .all(|x| x.is_nan() || *x > 0.0)
     );
     assert!(f.col("bars_on_side").unwrap().iter().all(|x| *x >= 1.0));
+}
+
+/// A fingerprint of every feature value on a fixed synthetic series. It pins the numeric
+/// behaviour of the feature code, so moving constants into configuration cannot change a result
+/// without this test failing.
+#[test]
+fn golden_feature_fingerprint() {
+    let steps: Vec<i32> = (0..DAYS * PER_DAY)
+        .map(|i| ((i * 7919) % 41) as i32 - 20)
+        .collect();
+    let weights: Vec<u8> = (0..DAYS * PER_DAY).map(|i| (i % 50) as u8).collect();
+    let bars = series(&steps, &weights);
+    let cfg = data_cfg();
+    let ev = events_cfg();
+    let params = event_params(&cfg, &ev);
+    let mut bytes: Vec<u8> = Vec::new();
+    for width in [5u32, 15] {
+        let c = build(&bars, &cfg, width, ev.atr_length);
+        let (events, _) = detect(&c, &params);
+        let f = build_features(
+            &events,
+            &c,
+            &LevelTable::build(&bars, &vwap_core::FeaturesConfig::default()),
+            &SessionIndex::build(&c),
+            &vwap_core::FeaturesConfig::default(),
+        );
+        bytes.extend((events.len() as u64).to_le_bytes());
+        for col in &f.cols {
+            for x in col {
+                bytes.extend(x.to_bits().to_le_bytes());
+            }
+        }
+    }
+    let hash = vwap_core::manifest::sha256_bytes(&bytes);
+    assert_eq!(
+        hash, "6964c46b48b653d076962b26156e6b2a017e32f2ca887da68d474cc3803ce023",
+        "feature fingerprint"
+    );
 }

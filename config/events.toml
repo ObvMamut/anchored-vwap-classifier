@@ -7,4 +7,12 @@ output_dir = "artifacts/events"
 spotcheck_days = 20
 spotcheck_seed = 42
 spotcheck_dir = "artifacts/spotcheck"
-font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+# Candidate fonts for the charts, tried in order (Linux, macOS, Windows).
+font_paths = [
+  "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+  "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+  "/Library/Fonts/Arial.ttf",
+  "/System/Library/Fonts/Supplemental/Arial.ttf",
+  "C:/Windows/Fonts/arial.ttf",
+]
+spotcheck_min_session_minutes = 1000
